@@ -11,6 +11,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
 
   TextInputConnection? _textInputConnection;
   TextEditingValue? _remoteEditingValue;
+  int _contextLineIndex = -1; // <<< ADD THIS LINE
 
   final _CodeFloatingCursorController _floatingCursorController;
   Timer? _floatingCursorScrollTimer;
@@ -131,60 +132,62 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   void removeTextPlaceholder() {
   }
 
-  @override
-  void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
-    if (_updateCausedByFloatingCursor) {
-      // This is necessary because otherwise the content of the line where the floating cursor was started
-      // will be pasted over to the line where the floating cursor was stopped.
-      _updateCausedByFloatingCursor = false;
-      return;
-    }
-    
-    if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
-      TextEditingValue newValue = _remoteEditingValue!;
-      for (final TextEditingDelta delta in textEditingDeltas) {
-        newValue = delta.apply(newValue);
-      }
-      _remoteEditingValue = newValue;
-      _controller.applyNewLine();
-      return;
-    }
+// In class _CodeInputController
 
-    // _Trace.begin('updateEditingValue all');
-    TextEditingValue newValue = _remoteEditingValue!;
-    bool smartChange = false;
-    for (final TextEditingDelta delta in textEditingDeltas) {
-      if (_autocompleteSymbols) {
-        TextEditingDelta newDelta = _SmartTextEditingDelta(delta).apply(selection);
-        if (newDelta != delta) {
-          smartChange = true;
-        }
-        newValue = newDelta.apply(newValue);
-      } else {
-        newValue = delta.apply(newValue);
-      }
-    }
-    if (newValue == _remoteEditingValue) {
-      return;
-    }
-    if (!smartChange) {
-      _remoteEditingValue = newValue;
-    }
-    // print('update text ${newValue.text}');
-    // print('update selection ${newValue.selection}');
-    // print('update composing ${newValue.composing}');
-    if (newValue.usePrefix) {
-      if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
-        _controller.deleteBackward();
-      } else {
-        _controller.edit(newValue.removePrefixIfNecessary());
-      }
-    } else {
-      _controller.edit(newValue);
-    }
-    notifyListeners();
-    // _Trace.end('updateEditingValue all');
+@override
+void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
+  if (_updateCausedByFloatingCursor) {
+    _updateCausedByFloatingCursor = false;
+    return;
   }
+
+  // Special, optimized handling for newlines
+  if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
+    TextEditingValue newValue = _remoteEditingValue!;
+    for (final TextEditingDelta delta in textEditingDeltas) {
+      newValue = delta.apply(newValue);
+    }
+    _remoteEditingValue = newValue;
+    _controller.applyNewLine();
+    return;
+  }
+
+  TextEditingValue newValue = _remoteEditingValue!;
+  bool smartChange = false;
+  for (final TextEditingDelta delta in textEditingDeltas) {
+    if (_autocompleteSymbols) {
+      TextEditingDelta newDelta = _SmartTextEditingDelta(delta).apply(selection);
+      if (newDelta != delta) {
+        smartChange = true;
+      }
+      newValue = newDelta.apply(newValue);
+    } else {
+      newValue = delta.apply(newValue);
+    }
+  }
+
+  if (newValue == _remoteEditingValue) {
+    return;
+  }
+
+  if (!smartChange) {
+    _remoteEditingValue = newValue;
+  }
+
+  if (newValue.usePrefix) {
+    if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
+      _controller.deleteBackward();
+    } else {
+      // With our new logic, we must always handle the multi-line input.
+      _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
+    }
+  } else {
+    _applyMultiLineInputValue(newValue);
+  }
+
+  // The notifyListeners is now handled inside _applyMultiLineInputValue
+  // through the controller's ValueNotifier, so it's not needed here.
+}
 
   @override
   void updateEditingValue(TextEditingValue textEditingValue) {
@@ -455,32 +458,135 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     _textInputConnection = null;
   }
 
-  TextEditingValue _buildTextEditingValue() {
-    final TextSelection textSelection;
-    if (selection.isSameLine) {
-      textSelection = TextSelection(
-        baseOffset: selection.baseOffset,
-        extentOffset: selection.extentOffset
-      );
-    } else {
-      if (selection.baseIndex < selection.extentIndex) {
-        textSelection = TextSelection(
-          baseOffset: selection.baseOffset,
-          extentOffset: codeLines[selection.baseIndex].length
-        );
-      } else {
-        textSelection = TextSelection(
-          baseOffset: 0,
-          extentOffset: selection.baseOffset
-        );
-      }
-    }
-    return TextEditingValue(
-      text: codeLines[selection.baseIndex].text,
-      selection: textSelection,
-      composing: composing
-    ).appendPrefixIfNecessary();
+  // In class _CodeInputController
+
+/// The number of lines to send to the IME above and below the current line.
+/// A value of 1 means 1 line above, the current line, and 1 line below (3 total).
+static const int _kImeContextLines = 1;
+
+TextEditingValue _buildTextEditingValue() {
+  // Store the current line index so we know how to parse the response from the IME.
+  _contextLineIndex = selection.baseIndex;
+
+  final int contextStartLine = max(0, _contextLineIndex - _kImeContextLines);
+  final int contextEndLine = min(codeLines.length, _contextLineIndex + _kImeContextLines + 1);
+
+  final List<String> contextLines = [];
+  for (int i = contextStartLine; i < contextEndLine; i++) {
+    contextLines.add(codeLines[i].text);
   }
+  final String contextText = contextLines.join('\n');
+
+  // The selection offsets from the controller are relative to the start of the current line.
+  // We need to convert them to be relative to the start of our new multi-line contextText.
+  int prefixLength = 0;
+  for (int i = contextStartLine; i < _contextLineIndex; i++) {
+    // Add length of the line + 1 for the newline character.
+    prefixLength += codeLines[i].text.length + 1;
+  }
+
+  final TextSelection newTextSelection;
+  if (selection.isSameLine) {
+    newTextSelection = TextSelection(
+      baseOffset: prefixLength + selection.baseOffset,
+      extentOffset: prefixLength + selection.extentOffset,
+      affinity: selection.extentAffinity,
+    );
+  } else {
+    // For multi-line selections, the logic gets much more complex.
+    // For now, we will collapse the selection to the extent, which is the most
+    // common behavior during IME text entry and navigation. This preserves the
+    // primary goal of fixing navigation.
+    newTextSelection = TextSelection.collapsed(
+      offset: prefixLength + selection.extentOffset,
+      affinity: selection.extentAffinity,
+    );
+  }
+
+  // Composing range also needs to be offset.
+  final TextRange newComposing = composing.isValid
+      ? TextRange(
+          start: prefixLength + composing.start,
+          end: prefixLength + composing.end,
+        )
+      : TextRange.empty;
+
+  return TextEditingValue(
+    text: contextText,
+    selection: newTextSelection,
+    composing: newComposing,
+  ).appendPrefixIfNecessary();
+}
+
+// In class _CodeInputController
+
+// Helper function to convert a flat offset in a multi-line string to a Line/Column position.
+(int, int) _convertOffsetToLineCol(String text, int offset) {
+  int line = 0;
+  int col = 0;
+  for (int i = 0; i < offset; i++) {
+    if (i >= text.length) break;
+    if (text[i] == '\n') {
+      line++;
+      col = 0;
+    } else {
+      col++;
+    }
+  }
+  return (line, col);
+}
+
+void _applyMultiLineInputValue(TextEditingValue value) {
+  if (_contextLineIndex == -1) return;
+
+  final int contextStartLine = max(0, _contextLineIndex - _kImeContextLines);
+
+  final List<String> updatedLines = value.text.split('\n');
+  final List<CodeLine> newCodeLines = updatedLines.map((text) => CodeLine(text)).toList();
+
+  final int oldContextEndLine = min(
+    codeLines.length,
+    _contextLineIndex + _kImeContextLines + 1,
+  );
+
+  // Replace the old context lines with the new ones.
+  _controller.runRevocableOp(() {
+    final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
+    modifiedCodeLines.addAll(newCodeLines);
+    if (oldContextEndLine < codeLines.length) {
+      modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
+    }
+    
+    // Convert the selection from the IME (relative to contextText) back to our model's format.
+    final (baseLine, baseCol) = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
+    final (extentLine, extentCol) = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
+
+    final CodeLineSelection newSelection = CodeLineSelection(
+      baseIndex: contextStartLine + baseLine,
+      baseOffset: baseCol,
+      extentIndex: contextStartLine + extentLine,
+      extentOffset: extentCol,
+      affinity: value.selection.affinity,
+    );
+
+    // This assumes composing happens on a single line.
+    final (composingStartLine, composingStartCol) = _convertOffsetToLineCol(value.text, value.composing.start);
+    final (_, composingEndCol) = _convertOffsetToLineCol(value.text, value.composing.end);
+
+    final TextRange newComposing = value.composing.isValid
+        ? TextRange(start: composingStartCol, end: composingEndCol)
+        : TextRange.empty;
+
+    // Directly update the controller's value. We bypass `controller.edit()`
+    // because it's designed for single-line edits.
+    _controller.value = _controller.value.copyWith(
+      codeLines: modifiedCodeLines,
+      selection: newSelection,
+      composing: newComposing,
+    );
+    _controller.makeCursorVisible();
+  });
+}
 
 }
 
