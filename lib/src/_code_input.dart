@@ -1,7 +1,14 @@
 part of re_editor;
 
-class _CodeInputController extends ChangeNotifier implements DeltaTextInputClient {
+// Helper class to return multiple values (line and column)
+// This replaces the Dart 3 record syntax `(int, int)` for backward compatibility.
+class _LineCol {
+  final int line;
+  final int col;
+  const _LineCol(this.line, this.col);
+}
 
+class _CodeInputController extends ChangeNotifier implements DeltaTextInputClient {
   CodeLineEditingController _controller;
   FocusNode _focusNode;
   bool _readOnly;
@@ -11,7 +18,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
 
   TextInputConnection? _textInputConnection;
   TextEditingValue? _remoteEditingValue;
-  int _contextLineIndex = -1; // <<< ADD THIS LINE
+  int _contextLineIndex = -1; // The line index our IME context is centered on
 
   final _CodeFloatingCursorController _floatingCursorController;
   Timer? _floatingCursorScrollTimer;
@@ -24,12 +31,12 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     required FocusNode focusNode,
     required bool readOnly,
     required bool autocompleteSymbols,
-  }) : _controller = controller,
-    _floatingCursorController = floatingCursorController,
-    _focusNode = focusNode,
-    _readOnly = readOnly,
-    _updateCausedByFloatingCursor = false,
-    _autocompleteSymbols = autocompleteSymbols {
+  })  : _controller = controller,
+        _floatingCursorController = floatingCursorController,
+        _focusNode = focusNode,
+        _readOnly = readOnly,
+        _updateCausedByFloatingCursor = false,
+        _autocompleteSymbols = autocompleteSymbols {
     _controller.addListener(_onCodeEditingChanged);
     _focusNode.addListener(_onFocusChanged);
   }
@@ -92,8 +99,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   TextRange get composing => _controller.composing;
 
   @override
-  void connectionClosed() {
-  }
+  void connectionClosed() {}
 
   @override
   AutofillScope? get currentAutofillScope => null;
@@ -113,85 +119,149 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   }
 
   @override
-  void performPrivateCommand(String action, Map<String, dynamic> data) {
-  }
+  void performPrivateCommand(String action, Map<String, dynamic> data) {}
 
   @override
-  void showAutocorrectionPromptRect(int start, int end) {
-  }
+  void showAutocorrectionPromptRect(int start, int end) {}
 
   @override
-  void showToolbar() {
-  }
+  void showToolbar() {}
 
   @override
-  void insertTextPlaceholder(Size size) {
-  }
+  void insertTextPlaceholder(Size size) {}
 
   @override
-  void removeTextPlaceholder() {
-  }
+  void removeTextPlaceholder() {}
 
-// In class _CodeInputController
-
-@override
-void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
-  if (_updateCausedByFloatingCursor) {
-    _updateCausedByFloatingCursor = false;
-    return;
-  }
-
-  // Special, optimized handling for newlines
-  if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
-    TextEditingValue newValue = _remoteEditingValue!;
-    for (final TextEditingDelta delta in textEditingDeltas) {
-      newValue = delta.apply(newValue);
-    }
-    _remoteEditingValue = newValue;
-    _controller.applyNewLine();
-    return;
-  }
-
-  TextEditingValue newValue = _remoteEditingValue!;
-  bool smartChange = false;
-  for (final TextEditingDelta delta in textEditingDeltas) {
-    if (_autocompleteSymbols) {
-      TextEditingDelta newDelta = _SmartTextEditingDelta(delta).apply(selection);
-      if (newDelta != delta) {
-        smartChange = true;
+  // Helper function to convert a flat offset in a multi-line string to a Line/Column position.
+  _LineCol _convertOffsetToLineCol(String text, int offset) {
+    int line = 0;
+    int col = 0;
+    // Clamp the offset to be within the bounds of the text length
+    final int safeOffset = min(offset, text.length);
+    for (int i = 0; i < safeOffset; i++) {
+      if (text[i] == '\n') {
+        line++;
+        col = 0;
+      } else {
+        col++;
       }
-      newValue = newDelta.apply(newValue);
-    } else {
-      newValue = delta.apply(newValue);
     }
+    return _LineCol(line, col);
   }
 
-  if (newValue == _remoteEditingValue) {
-    return;
-  }
+  void _applyMultiLineInputValue(TextEditingValue value) {
+    if (_contextLineIndex == -1) return;
 
-  if (!smartChange) {
-    _remoteEditingValue = newValue;
-  }
+    const int kImeContextLines = 1;
+    final int contextStartLine = max(0, _contextLineIndex - kImeContextLines);
 
-  if (newValue.usePrefix) {
-    if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
-      _controller.deleteBackward();
-    } else {
-      // With our new logic, we must always handle the multi-line input.
-      _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
-    }
-  } else {
-    _applyMultiLineInputValue(newValue);
-  }
+    final List<String> updatedLines = value.text.split('\n');
+    final List<CodeLine> newCodeLines = updatedLines.map((text) => CodeLine(text)).toList();
 
-  // The notifyListeners is now handled inside _applyMultiLineInputValue
-  // through the controller's ValueNotifier, so it's not needed here.
-}
+    final int oldContextEndLine = min(
+      codeLines.length,
+      _contextLineIndex + kImeContextLines + 1,
+    );
+
+    // Replace the old context lines with the new ones.
+    _controller.runRevocableOp(() {
+      final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
+      modifiedCodeLines.addAll(newCodeLines);
+      if (oldContextEndLine < codeLines.length) {
+        modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
+      }
+
+      // Convert the selection from the IME (relative to contextText) back to our model's format.
+      final _LineCol basePosition = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
+      final _LineCol extentPosition = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
+
+      final CodeLineSelection newSelection = CodeLineSelection(
+        baseIndex: contextStartLine + basePosition.line,
+        baseOffset: basePosition.col,
+        extentIndex: contextStartLine + extentPosition.line,
+        extentOffset: extentPosition.col,
+        baseAffinity: value.selection.affinity,
+        extentAffinity: value.selection.affinity,
+      );
+
+      // This assumes composing happens on a single line.
+      final _LineCol composingStartPosition = _convertOffsetToLineCol(value.text, value.composing.start);
+      final _LineCol composingEndPosition = _convertOffsetToLineCol(value.text, value.composing.end);
+
+      final TextRange newComposing = value.composing.isValid
+          ? TextRange(start: composingStartPosition.col, end: composingEndPosition.col)
+          : TextRange.empty;
+
+      // Directly update the controller's value. We bypass `controller.edit()`
+      // because it's designed for single-line edits.
+      _controller.value = _controller.value.copyWith(
+        codeLines: modifiedCodeLines,
+        selection: newSelection,
+        composing: newComposing,
+      );
+      _controller.makeCursorVisible();
+    });
+  }
 
   @override
-  void updateEditingValue(TextEditingValue textEditingValue) {
+  void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
+    if (_updateCausedByFloatingCursor) {
+      // This is necessary because otherwise the content of the line where the floating cursor was started
+      // will be pasted over to the line where the floating cursor was stopped.
+      _updateCausedByFloatingCursor = false;
+      return;
+    }
+
+    // Special, optimized handling for newlines, as this is a very common operation.
+    if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
+      TextEditingValue newValue = _remoteEditingValue!;
+      for (final TextEditingDelta delta in textEditingDeltas) {
+        newValue = delta.apply(newValue);
+      }
+      _remoteEditingValue = newValue;
+      _controller.applyNewLine();
+      return;
+    }
+
+    // _Trace.begin('updateEditingValue all');
+    TextEditingValue newValue = _remoteEditingValue!;
+    bool smartChange = false;
+    for (final TextEditingDelta delta in textEditingDeltas) {
+      if (_autocompleteSymbols) {
+        TextEditingDelta newDelta = _SmartTextEditingDelta(delta).apply(selection);
+        if (newDelta != delta) {
+          smartChange = true;
+        }
+        newValue = newDelta.apply(newValue);
+      } else {
+        newValue = delta.apply(newValue);
+      }
+    }
+
+    if (newValue == _remoteEditingValue) {
+      return;
+    }
+
+    if (!smartChange) {
+      _remoteEditingValue = newValue;
+    }
+    
+    if (newValue.usePrefix) {
+      if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
+        _controller.deleteBackward();
+      } else {
+        _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
+      }
+    } else {
+      _applyMultiLineInputValue(newValue);
+    }
+    // Listeners are notified by the controller when its value changes in _applyMultiLineInputValue.
+    // _Trace.end('updateEditingValue all');
   }
+
+  @override
+  void updateEditingValue(TextEditingValue textEditingValue) {}
 
   @override
   void updateFloatingCursor(RawFloatingCursorPoint point) {
@@ -200,7 +270,7 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
     if (render == null) {
       return;
     }
-    switch(point.state) {
+    switch (point.state) {
       case FloatingCursorDragState.Start:
         _floatingCursorStartingOffset = render.calculateTextPositionViewportOffset(selection.base)!;
         _floatingCursorController.setFloatingCursorPositions(
@@ -222,7 +292,7 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
           updatedOffset.dy.clamp(topBound, bottomBound),
         );
 
-        // An adjustment is made on the y-axis so that whenever it is in between lines, the line where the center 
+        // An adjustment is made on the y-axis so that whenever it is in between lines, the line where the center
         // of the floating cursor is will be selected.
         Offset adjustedClampedUpdatedOffset = clampedUpdatedOffset + Offset(0, render.floatingCursorHeight / 2);
         final CodeLinePosition newPosition = render.calculateTextPosition(adjustedClampedUpdatedOffset)!;
@@ -232,96 +302,83 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
 
         CodeLineSelection newSelection = CodeLineSelection.fromPosition(position: newPosition);
 
-
         if (clampedUpdatedOffset != updatedOffset) {
           // When the cursor is at one of the edges, adjust the starting offset so that the floating cursor
           // does not get "loose" when starting to move in the opposite direction.
           _floatingCursorStartingOffset += clampedUpdatedOffset - updatedOffset;
         }
 
-        if (clampedUpdatedOffset.dy == topBound || clampedUpdatedOffset.dy == bottomBound || clampedUpdatedOffset.dx == rightBound || clampedUpdatedOffset.dx == leftBound) {
+        if (clampedUpdatedOffset.dy == topBound ||
+            clampedUpdatedOffset.dy == bottomBound ||
+            clampedUpdatedOffset.dx == rightBound ||
+            clampedUpdatedOffset.dx == leftBound) {
           _floatingCursorScrollTimer ??= Timer.periodic(const Duration(milliseconds: 50), (timer) {
             render.autoScrollWhenDraggingFloatingCursor(clampedUpdatedOffset);
             final CodeLinePosition newPos = render.calculateTextPosition(adjustedClampedUpdatedOffset)!;
             final Offset? snappedNewOffset = render.calculateTextPositionViewportOffset(newPos);
 
             // This step ensures that the preview cursor will keep updating when scrolling
-            if (adjustedClampedUpdatedOffset.dx > snappedNewOffset!.dx + render.textStyle.fontSize!) {
+            if (snappedNewOffset != null && adjustedClampedUpdatedOffset.dx > snappedNewOffset.dx + render.textStyle.fontSize!) {
               _floatingCursorController.updatePreviewCursorOffset(snappedNewOffset);
-            }
-            else {
+            } else {
               _floatingCursorController.updatePreviewCursorOffset(null);
             }
           });
-        }
-        else {
+        } else {
           if (_floatingCursorScrollTimer != null) {
             _floatingCursorScrollTimer!.cancel();
             _floatingCursorScrollTimer = null;
           }
         }
-        
+
         // Only turn on the preview cursor if we are away from the end of the line (relatively to the font size)
-        if (adjustedClampedUpdatedOffset.dx > snappedNewOffset!.dx + render.textStyle.fontSize!) {
+        if (snappedNewOffset != null && adjustedClampedUpdatedOffset.dx > snappedNewOffset.dx + render.textStyle.fontSize!) {
           _floatingCursorController.setFloatingCursorPositions(
-            floatingCursorOffset: clampedUpdatedOffset, 
-            previewCursorOffset: snappedNewOffset, 
-            finalCursorOffset: snappedNewOffset, 
-            finalCursorSelection:newSelection
-          );
-        }
-        else {
+              floatingCursorOffset: clampedUpdatedOffset,
+              previewCursorOffset: snappedNewOffset,
+              finalCursorOffset: snappedNewOffset,
+              finalCursorSelection: newSelection);
+        } else {
           _floatingCursorController.setFloatingCursorPositions(
-            floatingCursorOffset: clampedUpdatedOffset, 
-            finalCursorOffset: snappedNewOffset, 
-            finalCursorSelection: newSelection
-          );
+              floatingCursorOffset: clampedUpdatedOffset, finalCursorOffset: snappedNewOffset, finalCursorSelection: newSelection);
         }
-        
+
         break;
       case FloatingCursorDragState.End:
         if (_floatingCursorScrollTimer != null) {
           _floatingCursorScrollTimer!.cancel();
           _floatingCursorScrollTimer = null;
         }
-        selection = _floatingCursorController.value.finalCursorSelection!;
+        if (_floatingCursorController.value.finalCursorSelection != null) {
+            selection = _floatingCursorController.value.finalCursorSelection!;
+        }
+
         final CodeLinePosition finalPosition = CodeLinePosition(
-          index: selection.baseIndex, 
-          offset: selection.baseOffset, 
-          affinity: selection.baseAffinity);
-        
+            index: selection.baseIndex, offset: selection.baseOffset, affinity: selection.baseAffinity);
+
         final Offset? finalOffset = render.calculateTextPositionViewportOffset(finalPosition);
-        
+
         // If the final selection is in not the viewport, make it visible without animating the floating cursor.
         // Otherwise, play the floating cursor reset animation.
         if (finalOffset != null && (finalOffset.dx < 0 || finalOffset.dy < 0)) {
           render.makePositionCenterIfInvisible(
-            CodeLinePosition(
-              index: selection.baseIndex, 
-              offset: selection.baseOffset, 
-              affinity: selection.baseAffinity),
-            animated: true);
-            _floatingCursorController.disableFloatingCursor();
-        }
-        else {
+              CodeLinePosition(index: selection.baseIndex, offset: selection.baseOffset, affinity: selection.baseAffinity),
+              animated: true);
+          _floatingCursorController.disableFloatingCursor();
+        } else {
           _floatingCursorController.animateDisableFloatingCursor();
         }
-
-
     }
   }
 
   @override
-  void didChangeInputControl(TextInputControl? oldControl, TextInputControl? newControl) {
-  }
+  void didChangeInputControl(TextInputControl? oldControl, TextInputControl? newControl) {}
 
   @override
-  void performSelector(String selectorName) {
-  }
+  void performSelector(String selectorName) {}
 
   @override
-  void insertContent(KeyboardInsertedContent content) {
-  }
+  void insertContent(KeyboardInsertedContent content) {}
 
   void ensureInput() {
     if (_focusNode.hasFocus) {
@@ -363,9 +420,7 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
       return;
     }
     if (localValue.composing.isValid && max(localValue.composing.start, localValue.composing.end) > localValue.text.length) {
-      localValue = localValue.copyWith(
-        composing: TextRange.empty
-      );
+      localValue = localValue.copyWith(composing: TextRange.empty);
     }
     // print('post text ${localValue.text}');
     // print('post selection ${localValue.selection}');
@@ -375,9 +430,7 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
     _textInputConnection!.setEditingState(localValue);
   }
 
-  void _updateRemoteComposingIfNeeded({
-    bool retry = false
-  }) {
+  void _updateRemoteComposingIfNeeded({bool retry = false}) {
     if (!_hasInputConnection) {
       return;
     }
@@ -385,12 +438,8 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
     if (render == null) {
       return;
     }
-    final Offset? composingStart = render.calculateTextPositionViewportOffset(selection.base.copyWith(
-      offset: _remoteEditingValue?.composing.start
-    ));
-    final Offset? composingEnd = render.calculateTextPositionViewportOffset(selection.extent.copyWith(
-      offset: _remoteEditingValue?.composing.end
-    ));
+    final Offset? composingStart = render.calculateTextPositionViewportOffset(selection.base.copyWith(offset: _remoteEditingValue?.composing.start));
+    final Offset? composingEnd = render.calculateTextPositionViewportOffset(selection.extent.copyWith(offset: _remoteEditingValue?.composing.end));
     if (composingStart != null && composingEnd != null) {
       _textInputConnection!.setComposingRect(Rect.fromPoints(composingStart, composingEnd + Offset(0, render.lineHeight)));
     }
@@ -399,9 +448,7 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
       _textInputConnection!.setCaretRect(Rect.fromLTWH(caret.dx, caret.dy, render.cursorWidth, render.lineHeight));
     } else if (!retry) {
       Future.delayed(const Duration(milliseconds: 10), () {
-        _updateRemoteComposingIfNeeded(
-          retry: true
-        );
+        _updateRemoteComposingIfNeeded(retry: true);
       });
     }
   }
@@ -434,11 +481,9 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
 
   void _openInputConnection() {
     if (!_hasInputConnection) {
-      final TextInputConnection connection = TextInput.attach(this,
-        const TextInputConfiguration(
-          enableDeltaModel: true,
-          inputAction: TextInputAction.newline
-        ),
+      final TextInputConnection connection = TextInput.attach(
+        this,
+        const TextInputConfiguration(enableDeltaModel: true, inputAction: TextInputAction.newline),
       );
       _remoteEditingValue = _buildTextEditingValue();
       connection.setEditingState(_remoteEditingValue!);
@@ -458,149 +503,76 @@ void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
     _textInputConnection = null;
   }
 
-  // In class _CodeInputController
+  /// The number of lines to send to the IME above and below the current line.
+  /// A value of 1 means 1 line above, the current line, and 1 line below (3 total).
+  static const int _kImeContextLines = 1;
 
-/// The number of lines to send to the IME above and below the current line.
-/// A value of 1 means 1 line above, the current line, and 1 line below (3 total).
-static const int _kImeContextLines = 1;
+  TextEditingValue _buildTextEditingValue() {
+    // Store the current line index so we know how to parse the response from the IME.
+    _contextLineIndex = selection.baseIndex;
+    if (codeLines.isEmpty) {
+      return const TextEditingValue();
+    }
 
-TextEditingValue _buildTextEditingValue() {
-  // Store the current line index so we know how to parse the response from the IME.
-  _contextLineIndex = selection.baseIndex;
+    final int contextStartLine = max(0, _contextLineIndex - _kImeContextLines);
+    final int contextEndLine = min(codeLines.length, _contextLineIndex + _kImeContextLines + 1);
 
-  final int contextStartLine = max(0, _contextLineIndex - _kImeContextLines);
-  final int contextEndLine = min(codeLines.length, _contextLineIndex + _kImeContextLines + 1);
+    final List<String> contextLines = [];
+    for (int i = contextStartLine; i < contextEndLine; i++) {
+      contextLines.add(codeLines[i].text);
+    }
+    final String contextText = contextLines.join('\n');
 
-  final List<String> contextLines = [];
-  for (int i = contextStartLine; i < contextEndLine; i++) {
-    contextLines.add(codeLines[i].text);
-  }
-  final String contextText = contextLines.join('\n');
+    // The selection offsets from the controller are relative to the start of the current line.
+    // We need to convert them to be relative to the start of our new multi-line contextText.
+    int prefixLength = 0;
+    for (int i = contextStartLine; i < _contextLineIndex; i++) {
+      // Add length of the line + 1 for the newline character.
+      prefixLength += codeLines[i].text.length + 1;
+    }
 
-  // The selection offsets from the controller are relative to the start of the current line.
-  // We need to convert them to be relative to the start of our new multi-line contextText.
-  int prefixLength = 0;
-  for (int i = contextStartLine; i < _contextLineIndex; i++) {
-    // Add length of the line + 1 for the newline character.
-    prefixLength += codeLines[i].text.length + 1;
-  }
-
-  final TextSelection newTextSelection;
-  if (selection.isSameLine) {
-    newTextSelection = TextSelection(
-      baseOffset: prefixLength + selection.baseOffset,
-      extentOffset: prefixLength + selection.extentOffset,
-      affinity: selection.extentAffinity,
-    );
-  } else {
-    // For multi-line selections, the logic gets much more complex.
-    // For now, we will collapse the selection to the extent, which is the most
-    // common behavior during IME text entry and navigation. This preserves the
-    // primary goal of fixing navigation.
-    newTextSelection = TextSelection.collapsed(
-      offset: prefixLength + selection.extentOffset,
-      affinity: selection.extentAffinity,
-    );
-  }
-
-  // Composing range also needs to be offset.
-  final TextRange newComposing = composing.isValid
-      ? TextRange(
-          start: prefixLength + composing.start,
-          end: prefixLength + composing.end,
-        )
-      : TextRange.empty;
-
-  return TextEditingValue(
-    text: contextText,
-    selection: newTextSelection,
-    composing: newComposing,
-  ).appendPrefixIfNecessary();
-}
-
-// In class _CodeInputController
-
-// Helper function to convert a flat offset in a multi-line string to a Line/Column position.
-(int, int) _convertOffsetToLineCol(String text, int offset) {
-  int line = 0;
-  int col = 0;
-  for (int i = 0; i < offset; i++) {
-    if (i >= text.length) break;
-    if (text[i] == '\n') {
-      line++;
-      col = 0;
+    final TextSelection newTextSelection;
+    if (selection.isSameLine) {
+      newTextSelection = TextSelection(
+        baseOffset: prefixLength + selection.baseOffset,
+        extentOffset: prefixLength + selection.extentOffset,
+        affinity: selection.extentAffinity,
+      );
     } else {
-      col++;
+      // For multi-line selections, the logic gets much more complex.
+      // For now, we will collapse the selection to the extent, which is the most
+      // common behavior during IME text entry and navigation. This preserves the
+      // primary goal of fixing navigation.
+      newTextSelection = TextSelection.collapsed(
+        offset: prefixLength + selection.extentOffset,
+        affinity: selection.extentAffinity,
+      );
     }
-  }
-  return (line, col);
-}
 
-void _applyMultiLineInputValue(TextEditingValue value) {
-  if (_contextLineIndex == -1) return;
-
-  final int contextStartLine = max(0, _contextLineIndex - _kImeContextLines);
-
-  final List<String> updatedLines = value.text.split('\n');
-  final List<CodeLine> newCodeLines = updatedLines.map((text) => CodeLine(text)).toList();
-
-  final int oldContextEndLine = min(
-    codeLines.length,
-    _contextLineIndex + _kImeContextLines + 1,
-  );
-
-  // Replace the old context lines with the new ones.
-  _controller.runRevocableOp(() {
-    final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
-    modifiedCodeLines.addAll(newCodeLines);
-    if (oldContextEndLine < codeLines.length) {
-      modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
-    }
-    
-    // Convert the selection from the IME (relative to contextText) back to our model's format.
-    final (baseLine, baseCol) = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
-    final (extentLine, extentCol) = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
-
-    final CodeLineSelection newSelection = CodeLineSelection(
-      baseIndex: contextStartLine + baseLine,
-      baseOffset: baseCol,
-      extentIndex: contextStartLine + extentLine,
-      extentOffset: extentCol,
-      affinity: value.selection.affinity,
-    );
-
-    // This assumes composing happens on a single line.
-    final (composingStartLine, composingStartCol) = _convertOffsetToLineCol(value.text, value.composing.start);
-    final (_, composingEndCol) = _convertOffsetToLineCol(value.text, value.composing.end);
-
-    final TextRange newComposing = value.composing.isValid
-        ? TextRange(start: composingStartCol, end: composingEndCol)
+    // Composing range also needs to be offset.
+    final TextRange newComposing = composing.isValid
+        ? TextRange(
+            start: prefixLength + composing.start,
+            end: prefixLength + composing.end,
+          )
         : TextRange.empty;
 
-    // Directly update the controller's value. We bypass `controller.edit()`
-    // because it's designed for single-line edits.
-    _controller.value = _controller.value.copyWith(
-      codeLines: modifiedCodeLines,
-      selection: newSelection,
+    return TextEditingValue(
+      text: contextText,
+      selection: newTextSelection,
       composing: newComposing,
-    );
-    _controller.makeCursorVisible();
-  });
-}
-
+    ).appendPrefixIfNecessary();
+  }
 }
 
 class _SmartTextEditingDelta {
-
   static const List<_ClosureSymbol> _closureSymbols = [
     _ClosureSymbol('{', '}'),
     _ClosureSymbol('[', ']'),
     _ClosureSymbol('(', ')'),
   ];
 
-  static const List<String> _quoteSymbols = [
-    '\'', '"', '`'
-  ];
+  static const List<String> _quoteSymbols = ['\'', '"', '`'];
 
   static const List<_ClosureSymbol> _wrapSymbols = [
     _ClosureSymbol('{', '}'),
@@ -643,12 +615,9 @@ class _SmartTextEditingDelta {
           break;
         }
         return TextEditingDeltaNonTextUpdate(
-          oldText: delta.oldText,
-          selection: TextSelection.collapsed(
-            offset: delta.insertionOffset + 1
-          ),
-          composing: delta.composing
-        );
+            oldText: delta.oldText,
+            selection: TextSelection.collapsed(offset: delta.insertionOffset + 1),
+            composing: delta.composing);
       }
     }
     for (final String symbol in _quoteSymbols) {
@@ -682,15 +651,11 @@ class _SmartTextEditingDelta {
     }
     final _ClosureSymbol symbol = _wrapSymbols[index];
     return TextEditingDeltaReplacement(
-      oldText: delta.oldText,
-      replacementText: symbol.left + delta.textReplaced + symbol.right,
-      replacedRange: delta.replacedRange,
-      selection: TextSelection(
-        baseOffset: selection.startOffset + 1,
-        extentOffset: selection.endOffset + 1
-      ),
-      composing: delta.composing
-    );
+        oldText: delta.oldText,
+        replacementText: symbol.left + delta.textReplaced + symbol.right,
+        replacedRange: delta.replacedRange,
+        selection: TextSelection(baseOffset: selection.startOffset + 1, extentOffset: selection.endOffset + 1),
+        composing: delta.composing);
   }
 
   bool _shouldAutoClosed(String text, int offset, _ClosureSymbol symbol) {
@@ -759,7 +724,6 @@ class _SmartTextEditingDelta {
     }
     return leftSymbolCount % 2 == rightSymbolCount % 2;
   }
-
 }
 
 class _ClosureSymbol {
@@ -772,13 +736,11 @@ class _ClosureSymbol {
   String toString() {
     return left + right;
   }
-
 }
 
 const String _kPrefix = '\u200b';
 
 extension _TextEditingValueExtension on TextEditingValue {
-
   bool get startWithPrefix => text.startsWith(_kPrefix);
 
   bool get usePrefix => kIsIOS || kIsAndroid;
@@ -788,16 +750,14 @@ extension _TextEditingValueExtension on TextEditingValue {
       return this;
     }
     return copyWith(
-      text: '$_kPrefix$text',
-      selection: selection.copyWith(
-        baseOffset: selection.baseOffset + 1,
-        extentOffset: selection.extentOffset + 1,
-      ),
-      composing: composing.isValid ? TextRange(
-        start: composing.start + 1,
-        end: composing.end + 1
-      ) : composing
-    );
+        text: '$_kPrefix$text',
+        selection: selection.copyWith(
+          baseOffset: selection.baseOffset + 1,
+          extentOffset: selection.extentOffset + 1,
+        ),
+        composing: composing.isValid
+            ? TextRange(start: composing.start + 1, end: composing.end + 1)
+            : composing);
   }
 
   TextEditingValue removePrefixIfNecessary() {
@@ -808,16 +768,13 @@ extension _TextEditingValueExtension on TextEditingValue {
       return this;
     }
     return copyWith(
-      text: text.substring(1),
-      selection: selection.copyWith(
-        baseOffset: max(0, selection.baseOffset - 1),
-        extentOffset: max(0, selection.extentOffset - 1),
-      ),
-      composing: composing.isValid ? TextRange(
-        start: max(0, composing.start - 1),
-        end: max(0, composing.end - 1)
-      ) : null
-    );
+        text: text.substring(1),
+        selection: selection.copyWith(
+          baseOffset: max(0, selection.baseOffset - 1),
+          extentOffset: max(0, selection.extentOffset - 1),
+        ),
+        composing: composing.isValid
+            ? TextRange(start: max(0, composing.start - 1), end: max(0, composing.end - 1))
+            : null);
   }
-
 }
