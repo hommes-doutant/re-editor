@@ -152,9 +152,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   void _processHighlight() {
     _engine.run(_controller.codeLines, (result) {
-      if (mounted) {
         value = result;
-      }
     });
   }
 }
