@@ -1,8 +1,5 @@
 part of re_editor;
 
-// Duration to wait for a pause in typing before triggering a highlight.
-const Duration _kHighlightDebounceDuration = Duration(milliseconds: 250);
-
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   final BuildContext _context;
   final _CodeParagraphProvider _provider;
@@ -10,7 +7,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   CodeLineEditingController _controller;
   CodeHighlightTheme? _theme;
-  Timer? _debounceTimer;
 
   _CodeHighlighter({
     required BuildContext context,
@@ -23,7 +19,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
     _controller.addListener(_onCodesChanged);
-    _processHighlight(); // Initial highlight is immediate
+    _processHighlight();
   }
 
   set controller(CodeLineEditingController value) {
@@ -33,7 +29,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _controller.removeListener(_onCodesChanged);
     _controller = value;
     _controller.addListener(_onCodesChanged);
-    _debounceHighlight();
+    _processHighlight();
   }
 
   set theme(CodeHighlightTheme? value) {
@@ -42,7 +38,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     _theme = value;
     _engine.theme = value;
-    _debounceHighlight();
+    _processHighlight();
   }
 
   IParagraph build({
@@ -64,7 +60,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   @override
   void dispose() {
-    _debounceTimer?.cancel();
     _controller.removeListener(_onCodesChanged);
     _engine.dispose();
     super.dispose();
@@ -107,7 +102,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     final _HighlightNode? midNode;
     if (startNodes.isEmpty) {
-      midNode = _HighlightNode(text.substring(start, end), result.nodes.length > 0 ? result.nodes[0].className : null);
+      midNode = _HighlightNode(text.substring(start, end), result.nodes[0].className);
     } else if (startNodes.length < result.nodes.length) {
       midNode = _HighlightNode(text.substring(start, end), result.nodes[startNodes.length].className);
     } else if (end > start) {
@@ -148,45 +143,22 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return null;
   }
 
-  // <<< THIS METHOD IS CORRECTED >>>
   void _onCodesChanged() {
-    // We always trigger the debounce. The expensive part (_processHighlight)
-    // will only run after the user stops typing. This is more reliable than
-    // trying to check for content changes here.
-    _debounceHighlight();
-  }
-
-  void _debounceHighlight() {
-    if (_debounceTimer?.isActive ?? false) {
-      _debounceTimer!.cancel();
+    if (_controller.preValue?.codeLines == _controller.codeLines) {
+      return;
     }
-    _debounceTimer = Timer(_kHighlightDebounceDuration, () {
-      _processHighlight();
-    });
+    _processHighlight();
   }
 
   void _processHighlight() {
-    // Add a check here to avoid highlighting if the content hasn't changed since the last highlight.
-    // This handles the case where only the selection changed, which also triggers _onCodesChanged.
-    final List<_HighlightResult> currentHighlight = value;
-    if (currentHighlight.isNotEmpty && _controller.codeLines.length == currentHighlight.length) {
-      bool isSame = true;
-      for (int i = 0; i < _controller.codeLines.length; i++) {
-        if (_controller.codeLines[i].text != currentHighlight[i].source) {
-          isSame = false;
-          break;
-        }
+    _engine.run(_controller.codeLines, (result) {
+      if (mounted) {
+        value = result;
       }
-      if (isSame) {
-        return; // Content is the same as what's already highlighted.
-      }
-    }
-
-    _engine.run(_controller.codeLines, (result) => value = result);
+    });
   }
 }
 
-// The rest of the file remains unchanged.
 class _CodeHighlightEngine {
   late final _IsolateTasker<_HighlightPayload, List<_HighlightResult>> _tasker;
 
@@ -195,8 +167,7 @@ class _CodeHighlightEngine {
 
   _CodeHighlightEngine(final CodeHighlightTheme? theme) {
     this.theme = theme;
-    _tasker = _IsolateTasker<_HighlightPayload, List<_HighlightResult>>(
-        'CodeHighlightEngine', _run);
+    _tasker = _IsolateTasker<_HighlightPayload, List<_HighlightResult>>('CodeHighlightEngine', _run);
   }
 
   set theme(CodeHighlightTheme? value) {
@@ -209,8 +180,7 @@ class _CodeHighlightEngine {
       _highlight = null;
     } else {
       final Highlight highlight = Highlight();
-      highlight
-          .registerLanguages(modes.map((key, value) => MapEntry(key, value.mode)));
+      highlight.registerLanguages(modes.map((key, value) => MapEntry(key, value.mode)));
       for (final HLPlugin plugin in _theme!.plugins) {
         highlight.addPlugin(plugin);
       }
@@ -233,15 +203,13 @@ class _CodeHighlightEngine {
       callback(const []);
       return;
     }
-    _tasker.run(
-        _HighlightPayload(
-          highlight: highlight,
-          codes: codes,
-          languages: modes.keys.toList(),
-          maxSizes: modes.values.map((e) => e.maxSize).toList(),
-          maxLineLengths: modes.values.map((e) => e.maxLineLength).toList(),
-        ),
-        callback);
+    _tasker.run(_HighlightPayload(
+      highlight: highlight,
+      codes: codes,
+      languages: modes.keys.toList(),
+      maxSizes: modes.values.map((e) => e.maxSize).toList(),
+      maxLineLengths: modes.values.map((e) => e.maxLineLength).toList(),
+    ), callback);
   }
 
   @pragma('vm:entry-point')
@@ -265,8 +233,7 @@ class _CodeHighlightEngine {
     if (!canHighlight) {
       result = payload.highlight.justTextHighlightResult(code);
     } else if (payload.languages.length == 1) {
-      result =
-          payload.highlight.highlight(code: code, language: payload.languages.first);
+      result = payload.highlight.highlight(code: code, language: payload.languages.first);
     } else {
       result = payload.highlight.highlightAuto(code, payload.languages);
     }
