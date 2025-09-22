@@ -8,8 +8,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   CodeLineEditingController _controller;
   CodeHighlightTheme? _theme;
 
-  // The complete cache of highlight results for the document.
-  // The list index corresponds to the line index.
   List<_HighlightResult> _highlightCache = [];
 
   _CodeHighlighter({
@@ -53,7 +51,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _engine.dispose();
     super.dispose();
   }
-  
+
   IParagraph build({
     required int index,
     required TextStyle style,
@@ -144,7 +142,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return null;
   }
 
-  // --- START OF MODIFIED LOGIC ---
   void _onCodesChanged() {
     final CodeLineEditingValue? preValue = _controller.preValue;
     if (preValue == null || _controller.codeLines == preValue.codeLines) {
@@ -159,48 +156,60 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
 
-    // This is a standard diffing algorithm to find the exact block of changed lines.
-    // Find the first line that differs by iterating from the start.
-    int firstDiff = 0;
-    while (firstDiff < oldCodeLines.length &&
-           firstDiff < newCodeLines.length &&
-           oldCodeLines[firstDiff] == newCodeLines[firstDiff]) {
-      firstDiff++;
-    }
+    // --- START OF CORRECTED LOGIC ---
+    // The key change is here. We now differentiate between structural changes
+    // (insertions/deletions) and simple modifications.
 
-    // Find the last line that differs by iterating from the end.
-    int lastDiffOld = oldCodeLines.length - 1;
-    int lastDiffNew = newCodeLines.length - 1;
-    while (lastDiffOld >= firstDiff &&
-           lastDiffNew >= firstDiff &&
-           oldCodeLines[lastDiffOld] == newCodeLines[lastDiffNew]) {
-      lastDiffOld--;
-      lastDiffNew--;
-    }
+    if (newCodeLines.length != oldCodeLines.length) {
+      // Structural change: a line was added or removed.
+      // We MUST manipulate the cache to keep it in sync.
+      int firstDiff = 0;
+      while (firstDiff < oldCodeLines.length &&
+             firstDiff < newCodeLines.length &&
+             oldCodeLines[firstDiff] == newCodeLines[firstDiff]) {
+        firstDiff++;
+      }
 
-    final int numDeleted = lastDiffOld - firstDiff + 1;
-    final int numAdded = lastDiffNew - firstDiff + 1;
+      int lastDiffOld = oldCodeLines.length - 1;
+      int lastDiffNew = newCodeLines.length - 1;
+      while (lastDiffOld >= firstDiff &&
+             lastDiffNew >= firstDiff &&
+             oldCodeLines[lastDiffOld] == newCodeLines[lastDiffNew]) {
+        lastDiffOld--;
+        lastDiffNew--;
+      }
 
-    // Now, manipulate the cache to reflect the insertions and deletions.
-    if (firstDiff < _highlightCache.length) {
-      // Create placeholder results for newly added lines.
+      final int numDeleted = lastDiffOld - firstDiff + 1;
+      final int numAdded = lastDiffNew - firstDiff + 1;
+
       final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
-      // Replace the changed range in the cache.
       _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
+      
+      // Immediately update the UI with the structurally correct cache.
+      // This correctly shifts highlighting for subsequent lines.
+      value = List.of(_highlightCache);
+
+      // Trigger a partial highlight to fill in the new placeholders.
+      _processPartialHighlight(firstDiff);
+
     } else {
-      // The change happened entirely after the current cache size, just add placeholders.
-      final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
-      _highlightCache.addAll(newPlaceholders);
+      // Modification only: no lines added or removed.
+      // We don't touch the cache or update the UI yet to avoid flicker.
+      int firstDirtyLine = -1;
+      for (int i = 0; i < newCodeLines.length; i++) {
+        if (oldCodeLines[i] != newCodeLines[i]) {
+          firstDirtyLine = i;
+          break;
+        }
+      }
+
+      if (firstDirtyLine != -1) {
+        // Just trigger the partial highlight. The UI will update in the callback.
+        _processPartialHighlight(firstDirtyLine);
+      }
     }
-
-    // Immediately update the UI with the structurally correct (but partially un-highlighted) cache.
-    // This makes highlighting "disappear" from changed lines and shift correctly for unchanged lines.
-    value = List.of(_highlightCache);
-
-    // Finally, trigger a partial highlight starting from the first modified line.
-    _processPartialHighlight(firstDiff);
+    // --- END OF CORRECTED LOGIC ---
   }
-  // --- END OF MODIFIED LOGIC ---
 
   void _processFullHighlight() {
     _engine.run(_controller.codeLines, (results) {
@@ -220,7 +229,8 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
             _highlightCache[index] = result;
           }
         });
-        // Notify listeners with the updated cache.
+        // Now, notify listeners with the fully updated cache.
+        // This is the single update that prevents the flicker.
         value = List.of(_highlightCache);
     });
   }
@@ -316,11 +326,9 @@ class _CodeHighlightEngine {
 
   @pragma('vm:entry-point')
   static Map<int, _HighlightResult> _runPartial(_PartialHighlightPayload payload) {
-    // We re-highlight a "window" around the dirty line to ensure multi-line
-    // syntax (like block comments) is correctly re-evaluated.
-    const int contextSize = 50; 
+    const int contextSize = 50;
     final int startLine = max(0, payload.dirtyLineIndex - contextSize);
-    final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize);
+    final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize + 1); // +1 to capture more context on modification
     
     if (startLine >= endLine) {
       return {};
