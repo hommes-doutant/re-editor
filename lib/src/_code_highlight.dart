@@ -1,17 +1,5 @@
 part of re_editor;
 
-// A new class to hold the cached result for a single line.
-// Crucially, it stores the parser state at the end of the line.
-class _LineHighlightResult {
-  final List<_HighlightNode> nodes;
-  final HighlightResult? result; // The raw result which contains the end state.
-
-  _LineHighlightResult(this.nodes, this.result);
-
-  String get source => nodes.map((e) => e.value).join();
-}
-
-
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   final BuildContext _context;
   final _CodeParagraphProvider _provider;
@@ -20,8 +8,9 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   CodeLineEditingController _controller;
   CodeHighlightTheme? _theme;
 
-  // Cache for incremental highlighting. Maps line index to its result.
-  final Map<int, _LineHighlightResult> _highlightCache = {};
+  // The complete cache of highlight results for the document.
+  // The list index corresponds to the line index.
+  List<_HighlightResult> _highlightCache = [];
 
   _CodeHighlighter({
     required BuildContext context,
@@ -34,7 +23,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
     _controller.addListener(_onCodesChanged);
-    _processFullHighlight(); // Perform a full highlight on initialization.
+    _processFullHighlight();
   }
 
   set controller(CodeLineEditingController value) {
@@ -44,7 +33,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _controller.removeListener(_onCodesChanged);
     _controller = value;
     _controller.addListener(_onCodesChanged);
-    _highlightCache.clear(); // Clear cache for new controller
+    _highlightCache.clear();
     _processFullHighlight();
   }
 
@@ -54,7 +43,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     _theme = value;
     _engine.theme = value;
-    _highlightCache.clear(); // Clear cache for new theme
+    _highlightCache.clear();
     _processFullHighlight();
   }
 
@@ -65,7 +54,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     super.dispose();
   }
   
-  // This part of the code remains largely the same, it just consumes the results.
   IParagraph build({
     required int index,
     required TextStyle style,
@@ -145,8 +133,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final theme = _theme?.theme;
     if (theme == null) return null;
     
-    // This can be optimized, but for now, we'll keep it simple.
-    // The original logic is fine.
     String current = className;
     while (true) {
       final style = theme[current];
@@ -159,7 +145,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return null;
   }
 
-  // The new brain of the operation. Decides whether to do a full or incremental highlight.
   void _onCodesChanged() {
     final CodeLineEditingValue? preValue = _controller.preValue;
     if (preValue == null || _controller.codeLines == preValue.codeLines) {
@@ -169,80 +154,60 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final CodeLines oldCodeLines = preValue.codeLines;
     final CodeLines newCodeLines = _controller.codeLines;
 
-    // Heuristic: If the number of lines changed significantly, or if the cache is empty,
-    // it's probably faster or necessary to do a full re-highlight.
-    if (_highlightCache.isEmpty || (newCodeLines.length - oldCodeLines.length).abs() > 50) {
+    if (_highlightCache.isEmpty || newCodeLines.length != oldCodeLines.length) {
       _processFullHighlight();
       return;
     }
 
-    // Find the first line that differs.
     int firstDirtyLine = -1;
-    final int minLength = min(oldCodeLines.length, newCodeLines.length);
-    for (int i = 0; i < minLength; i++) {
+    for (int i = 0; i < newCodeLines.length; i++) {
       if (oldCodeLines[i] != newCodeLines[i]) {
         firstDirtyLine = i;
         break;
       }
     }
 
-    if (firstDirtyLine == -1) {
-      // Lines are the same, but one document is longer. The first new/deleted line is the dirty one.
-      if (newCodeLines.length != oldCodeLines.length) {
-        firstDirtyLine = minLength;
-      } else {
-        // No change detected.
-        return;
-      }
+    if (firstDirtyLine != -1) {
+      _processPartialHighlight(firstDirtyLine);
     }
-    
-    _processIncrementalHighlight(firstDirtyLine);
   }
 
   void _processFullHighlight() {
-    _engine.runFullHighlight(_controller.codeLines, (newCache) {
-      _highlightCache.clear();
-      _highlightCache.addAll(newCache);
-      // Convert the new cache to the format the ValueNotifier expects.
-      final results = _highlightCache.values.map((e) => _HighlightResult(e.nodes)).toList();
-      value = results;
+    _engine.run(_controller.codeLines, (results) {
+        _highlightCache = results;
+        value = results;
     });
   }
 
-  void _processIncrementalHighlight(int dirtyLineIndex) {
-    _engine.runIncrementalHighlight(
+  void _processPartialHighlight(int dirtyLineIndex) {
+    _engine.runPartial(
       _controller.codeLines, 
-      _highlightCache, 
       dirtyLineIndex, 
-      (updatedLines) {
-        // Update our cache with the new results from the incremental run.
-        _highlightCache.addAll(updatedLines);
-
-        // If lines were deleted, we need to remove them from the cache.
-        if (_controller.codeLines.length < _highlightCache.length) {
-          _highlightCache.removeWhere((key, _) => key >= _controller.codeLines.length);
-        }
-
-        // Reconstruct the full list of results for the UI.
-        final results = _highlightCache.values.map((e) => _HighlightResult(e.nodes)).toList();
-        value = results;
+      (partialResult) {
+        // Merge the partial results back into our main cache.
+        partialResult.forEach((index, result) {
+          if (index < _highlightCache.length) {
+            _highlightCache[index] = result;
+          }
+        });
+        // Notify listeners with the updated cache.
+        value = List.of(_highlightCache);
     });
   }
 }
 
 class _CodeHighlightEngine {
-  // We need two separate taskers, one for full and one for incremental,
-  // to prevent them from interfering with each other's pending requests.
-  late final _IsolateTasker<_FullHighlightRequest, Map<int, _LineHighlightResult>> _fullTasker;
-  late final _IsolateTasker<_IncrementalHighlightRequest, Map<int, _LineHighlightResult>> _incrementalTasker;
+  // A single tasker is enough, as our new _IsolateTasker handles "latest-only".
+  late final _IsolateTasker<_HighlightPayload, List<_HighlightResult>> _tasker;
+  late final _IsolateTasker<_PartialHighlightPayload, Map<int, _HighlightResult>> _partialTasker;
 
   Highlight? _highlight;
   CodeHighlightTheme? _theme;
 
   _CodeHighlightEngine(final CodeHighlightTheme? theme) {
     this.theme = theme;
-    _fullTasker = _IsolateTasker('FullCodeHighlightEngine', _runFull);
-    _incrementalTasker = _IsolateTasker('IncrementalCodeHighlightEngine', _runIncremental);
+    _tasker = _IsolateTasker('CodeHighlightEngine', _run);
+    _partialTasker = _IsolateTasker('PartialCodeHighlightEngine', _runPartial);
   }
 
   set theme(CodeHighlightTheme? value) {
@@ -261,107 +226,122 @@ class _CodeHighlightEngine {
   }
 
   void dispose() {
-    _fullTasker.close();
-    _incrementalTasker.close();
+    _tasker.close();
+    _partialTasker.close();
   }
 
-  // Method to trigger a full, stateful highlight.
-  void runFullHighlight(CodeLines codes, IsolateCallback<Map<int, _LineHighlightResult>> callback) {
+  // The main run method for full highlighting.
+  void run(CodeLines codes, IsolateCallback<List<_HighlightResult>> callback) {
+    if (_highlight == null) {
+      callback([]);
+      return;
+    }
+    _tasker.run(_createPayload(codes), callback);
+  }
+
+  // The new run method for partial highlighting.
+  void runPartial(CodeLines codes, int dirtyLineIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
     if (_highlight == null) {
       callback({});
       return;
     }
-    _fullTasker.run(_FullHighlightRequest(highlight: _highlight!, codes: codes), callback);
+    _partialTasker.run(_createPartialPayload(codes, dirtyLineIndex), callback);
   }
 
-  // Method to trigger an incremental highlight.
-  void runIncrementalHighlight(CodeLines codes, Map<int, _LineHighlightResult> oldCache, int dirtyLineIndex, IsolateCallback<Map<int, _LineHighlightResult>> callback) {
-    if (_highlight == null) {
-      callback({});
-      return;
-    }
-    _incrementalTasker.run(_IncrementalHighlightRequest(
-      highlight: _highlight!, 
-      codes: codes, 
-      oldCache: oldCache, 
-      dirtyLineIndex: dirtyLineIndex
-    ), callback);
+  _HighlightPayload _createPayload(CodeLines codes) {
+    final Map<String, CodeHighlightThemeMode> modes = _theme?.languages ?? {};
+    return _HighlightPayload(
+      highlight: _highlight!,
+      codes: codes,
+      languages: modes.keys.toList(),
+      maxSizes: modes.values.map((e) => e.maxSize).toList(),
+      maxLineLengths: modes.values.map((e) => e.maxLineLength).toList(),
+    );
   }
 
-  // Isolate entry point for a full highlight.
+  _PartialHighlightPayload _createPartialPayload(CodeLines codes, int dirtyLineIndex) {
+    return _PartialHighlightPayload(
+      highlight: _highlight!,
+      codes: codes,
+      dirtyLineIndex: dirtyLineIndex,
+      language: _theme?.languages.keys.first ?? '', // Assuming one language
+    );
+  }
+
   @pragma('vm:entry-point')
-  static Map<int, _LineHighlightResult> _runFull(_FullHighlightRequest payload) {
-    final newCache = <int, _LineHighlightResult>{};
-    HighlightResult? previousResult;
-    for (int i = 0; i < payload.codes.length; i++) {
-      final line = payload.codes[i].text;
-      final result = payload.highlight.highlight(
-        code: line,
-        language: 'dart', // Assuming dart for simplicity, can be made dynamic
-        continuation: previousResult,
-      );
-      final renderer = _HighlightLineRenderer();
-      result.render(renderer);
-      newCache[i] = _LineHighlightResult(renderer.lineResults.first.nodes, result);
-      previousResult = result;
+  static List<_HighlightResult> _run(_HighlightPayload payload) {
+    // This logic remains the same.
+    final String code = payload.codes.asString(TextLineBreak.lf, false);
+    final HighlightResult result;
+    if (payload.languages.length == 1) {
+      result = payload.highlight.highlight(code: code, language: payload.languages.first);
+    } else {
+      result = payload.highlight.highlightAuto(code, payload.languages);
     }
-    return newCache;
+    final _HighlightLineRenderer renderer = _HighlightLineRenderer();
+    result.render(renderer);
+    return renderer.lineResults;
   }
 
-  // Isolate entry point for an incremental highlight.
   @pragma('vm:entry-point')
-  static Map<int, _LineHighlightResult> _runIncremental(_IncrementalHighlightRequest payload) {
-    final updatedLines = <int, _LineHighlightResult>{};
+  static Map<int, _HighlightResult> _runPartial(_PartialHighlightPayload payload) {
+    const int contextSize = 50; // Re-highlight 50 lines before and after.
+    final int startLine = max(0, payload.dirtyLineIndex - contextSize);
+    final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize);
     
-    // Get the state from the line *before* the first dirty line.
-    final HighlightResult? startState = payload.dirtyLineIndex > 0
-        ? payload.oldCache[payload.dirtyLineIndex - 1]?.result
-        : null;
-
-    HighlightResult? previousResult = startState;
-    for (int i = payload.dirtyLineIndex; i < payload.codes.length; i++) {
-      final line = payload.codes[i].text;
-      final result = payload.highlight.highlight(
-        code: line,
-        language: 'dart',
-        continuation: previousResult,
-      );
-      final renderer = _HighlightLineRenderer();
-      result.render(renderer);
-      
-      updatedLines[i] = _LineHighlightResult(renderer.lineResults.first.nodes, result);
-      
-      final oldEndState = payload.oldCache[i]?.result?.endState;
-      final newEndState = result.endState;
-      
-      // The stabilization check!
-      if (oldEndState == newEndState) {
-        break; // Stop processing, the rest of the file is unchanged.
-      }
-      
-      previousResult = result;
+    if (startLine >= endLine) {
+      return {};
     }
-    return updatedLines;
+
+    final List<String> linesToHighlight = [];
+    for (int i = startLine; i < endLine; i++) {
+      linesToHighlight.add(payload.codes[i].text);
+    }
+
+    final String textChunk = linesToHighlight.join('\n');
+    final HighlightResult result = payload.highlight.highlight(code: textChunk, language: payload.language);
+    
+    final _HighlightLineRenderer renderer = _HighlightLineRenderer();
+    result.render(renderer);
+    
+    final Map<int, _HighlightResult> updatedResults = {};
+    for (int i = 0; i < renderer.lineResults.length; i++) {
+      final int absoluteLineIndex = startLine + i;
+      updatedResults[absoluteLineIndex] = renderer.lineResults[i];
+    }
+    
+    return updatedResults;
   }
 }
 
-// Payloads for isolate communication.
-class _FullHighlightRequest {
+// Payload for full highlighting
+class _HighlightPayload {
   final Highlight highlight;
   final CodeLines codes;
-  const _FullHighlightRequest({required this.highlight, required this.codes});
+  final List<String> languages;
+  final List<int> maxSizes;
+  final List<int> maxLineLengths;
+
+  const _HighlightPayload({
+    required this.highlight, required this.codes, required this.languages,
+    required this.maxSizes, required this.maxLineLengths,
+  });
 }
 
-class _IncrementalHighlightRequest {
+// New payload for partial highlighting
+class _PartialHighlightPayload {
   final Highlight highlight;
   final CodeLines codes;
-  final Map<int, _LineHighlightResult> oldCache;
   final int dirtyLineIndex;
-  const _IncrementalHighlightRequest({required this.highlight, required this.codes, required this.oldCache, required this.dirtyLineIndex});
+  final String language;
+
+  const _PartialHighlightPayload({
+    required this.highlight, required this.codes, 
+    required this.dirtyLineIndex, required this.language,
+  });
 }
 
 
-// These classes remain the same
 class _HighlightResult {
   final List<_HighlightNode> nodes;
   _HighlightResult(this.nodes);
