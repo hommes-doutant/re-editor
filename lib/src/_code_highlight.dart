@@ -83,7 +83,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     if (result.source == text) {
       return _buildSpanFromNodes(result.nodes, style);
     }
-    // Diff logic remains the same...
     final List<_HighlightNode> startNodes = [];
     int start = 0;
     int end = text.length;
@@ -145,6 +144,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return null;
   }
 
+  // --- START OF MODIFIED LOGIC ---
   void _onCodesChanged() {
     final CodeLineEditingValue? preValue = _controller.preValue;
     if (preValue == null || _controller.codeLines == preValue.codeLines) {
@@ -154,23 +154,53 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final CodeLines oldCodeLines = preValue.codeLines;
     final CodeLines newCodeLines = _controller.codeLines;
 
-    if (_highlightCache.isEmpty || newCodeLines.length != oldCodeLines.length) {
+    if (_highlightCache.isEmpty) {
       _processFullHighlight();
       return;
     }
 
-    int firstDirtyLine = -1;
-    for (int i = 0; i < newCodeLines.length; i++) {
-      if (oldCodeLines[i] != newCodeLines[i]) {
-        firstDirtyLine = i;
-        break;
-      }
+    // This is a standard diffing algorithm to find the exact block of changed lines.
+    // Find the first line that differs by iterating from the start.
+    int firstDiff = 0;
+    while (firstDiff < oldCodeLines.length &&
+           firstDiff < newCodeLines.length &&
+           oldCodeLines[firstDiff] == newCodeLines[firstDiff]) {
+      firstDiff++;
     }
 
-    if (firstDirtyLine != -1) {
-      _processPartialHighlight(firstDirtyLine);
+    // Find the last line that differs by iterating from the end.
+    int lastDiffOld = oldCodeLines.length - 1;
+    int lastDiffNew = newCodeLines.length - 1;
+    while (lastDiffOld >= firstDiff &&
+           lastDiffNew >= firstDiff &&
+           oldCodeLines[lastDiffOld] == newCodeLines[lastDiffNew]) {
+      lastDiffOld--;
+      lastDiffNew--;
     }
+
+    final int numDeleted = lastDiffOld - firstDiff + 1;
+    final int numAdded = lastDiffNew - firstDiff + 1;
+
+    // Now, manipulate the cache to reflect the insertions and deletions.
+    if (firstDiff < _highlightCache.length) {
+      // Create placeholder results for newly added lines.
+      final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
+      // Replace the changed range in the cache.
+      _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
+    } else {
+      // The change happened entirely after the current cache size, just add placeholders.
+      final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
+      _highlightCache.addAll(newPlaceholders);
+    }
+
+    // Immediately update the UI with the structurally correct (but partially un-highlighted) cache.
+    // This makes highlighting "disappear" from changed lines and shift correctly for unchanged lines.
+    value = List.of(_highlightCache);
+
+    // Finally, trigger a partial highlight starting from the first modified line.
+    _processPartialHighlight(firstDiff);
   }
+  // --- END OF MODIFIED LOGIC ---
 
   void _processFullHighlight() {
     _engine.run(_controller.codeLines, (results) {
@@ -197,7 +227,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 }
 
 class _CodeHighlightEngine {
-  // A single tasker is enough, as our new _IsolateTasker handles "latest-only".
   late final _IsolateTasker<_HighlightPayload, List<_HighlightResult>> _tasker;
   late final _IsolateTasker<_PartialHighlightPayload, Map<int, _HighlightResult>> _partialTasker;
 
@@ -230,7 +259,6 @@ class _CodeHighlightEngine {
     _partialTasker.close();
   }
 
-  // The main run method for full highlighting.
   void run(CodeLines codes, IsolateCallback<List<_HighlightResult>> callback) {
     if (_highlight == null) {
       callback([]);
@@ -239,7 +267,6 @@ class _CodeHighlightEngine {
     _tasker.run(_createPayload(codes), callback);
   }
 
-  // The new run method for partial highlighting.
   void runPartial(CodeLines codes, int dirtyLineIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
     if (_highlight == null) {
       callback({});
@@ -260,20 +287,24 @@ class _CodeHighlightEngine {
   }
 
   _PartialHighlightPayload _createPartialPayload(CodeLines codes, int dirtyLineIndex) {
+    final String language = _theme?.languages.keys.isNotEmpty == true 
+      ? _theme!.languages.keys.first 
+      : 'plaintext';
     return _PartialHighlightPayload(
       highlight: _highlight!,
       codes: codes,
       dirtyLineIndex: dirtyLineIndex,
-      language: _theme?.languages.keys.first ?? '', // Assuming one language
+      language: language,
     );
   }
 
   @pragma('vm:entry-point')
   static List<_HighlightResult> _run(_HighlightPayload payload) {
-    // This logic remains the same.
     final String code = payload.codes.asString(TextLineBreak.lf, false);
     final HighlightResult result;
-    if (payload.languages.length == 1) {
+    if (payload.languages.isEmpty) {
+      result = payload.highlight.highlight(code: code, language: 'plaintext');
+    } else if (payload.languages.length == 1) {
       result = payload.highlight.highlight(code: code, language: payload.languages.first);
     } else {
       result = payload.highlight.highlightAuto(code, payload.languages);
@@ -285,7 +316,9 @@ class _CodeHighlightEngine {
 
   @pragma('vm:entry-point')
   static Map<int, _HighlightResult> _runPartial(_PartialHighlightPayload payload) {
-    const int contextSize = 50; // Re-highlight 50 lines before and after.
+    // We re-highlight a "window" around the dirty line to ensure multi-line
+    // syntax (like block comments) is correctly re-evaluated.
+    const int contextSize = 50; 
     final int startLine = max(0, payload.dirtyLineIndex - contextSize);
     final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize);
     
@@ -307,14 +340,15 @@ class _CodeHighlightEngine {
     final Map<int, _HighlightResult> updatedResults = {};
     for (int i = 0; i < renderer.lineResults.length; i++) {
       final int absoluteLineIndex = startLine + i;
-      updatedResults[absoluteLineIndex] = renderer.lineResults[i];
+      if (absoluteLineIndex < payload.codes.length) {
+         updatedResults[absoluteLineIndex] = renderer.lineResults[i];
+      }
     }
     
     return updatedResults;
   }
 }
 
-// Payload for full highlighting
 class _HighlightPayload {
   final Highlight highlight;
   final CodeLines codes;
@@ -328,7 +362,6 @@ class _HighlightPayload {
   });
 }
 
-// New payload for partial highlighting
 class _PartialHighlightPayload {
   final Highlight highlight;
   final CodeLines codes;
@@ -340,7 +373,6 @@ class _PartialHighlightPayload {
     required this.dirtyLineIndex, required this.language,
   });
 }
-
 
 class _HighlightResult {
   final List<_HighlightNode> nodes;
