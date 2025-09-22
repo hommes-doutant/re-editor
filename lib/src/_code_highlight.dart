@@ -1,7 +1,6 @@
 part of re_editor;
 
 // Duration to wait for a pause in typing before triggering a highlight.
-// You can adjust this value. 250ms is a good starting point.
 const Duration _kHighlightDebounceDuration = Duration(milliseconds: 250);
 
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
@@ -24,8 +23,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
     _controller.addListener(_onCodesChanged);
-    // Initial highlight should be immediate
-    _processHighlight();
+    _processHighlight(); // Initial highlight is immediate
   }
 
   set controller(CodeLineEditingController value) {
@@ -150,28 +148,40 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return null;
   }
 
+  // <<< THIS METHOD IS CORRECTED >>>
   void _onCodesChanged() {
-    if (_controller.preValue?.codeLines == _controller.codeLines) {
-      return;
-    }
+    // We always trigger the debounce. The expensive part (_processHighlight)
+    // will only run after the user stops typing. This is more reliable than
+    // trying to check for content changes here.
     _debounceHighlight();
   }
 
-  // <<< THIS METHOD IS CORRECTED >>>
   void _debounceHighlight() {
-    // If there's an existing timer, cancel it.
     if (_debounceTimer?.isActive ?? false) {
       _debounceTimer!.cancel();
     }
-    // Start a new timer.
     _debounceTimer = Timer(_kHighlightDebounceDuration, () {
-      // The timer callback will not run if the timer has been cancelled,
-      // which happens in dispose(). This is a sufficient check.
       _processHighlight();
     });
   }
 
   void _processHighlight() {
+    // Add a check here to avoid highlighting if the content hasn't changed since the last highlight.
+    // This handles the case where only the selection changed, which also triggers _onCodesChanged.
+    final List<_HighlightResult> currentHighlight = value;
+    if (currentHighlight.isNotEmpty && _controller.codeLines.length == currentHighlight.length) {
+      bool isSame = true;
+      for (int i = 0; i < _controller.codeLines.length; i++) {
+        if (_controller.codeLines[i].text != currentHighlight[i].source) {
+          isSame = false;
+          break;
+        }
+      }
+      if (isSame) {
+        return; // Content is the same as what's already highlighted.
+      }
+    }
+
     _engine.run(_controller.codeLines, (result) => value = result);
   }
 }
