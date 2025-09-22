@@ -2,7 +2,7 @@ part of re_editor;
 
 // Duration to wait for a pause in typing before triggering a highlight.
 // You can adjust this value. 250ms is a good starting point.
-const Duration _kHighlightDebounceDuration = Duration(milliseconds: 250); // <<< ADD THIS
+const Duration _kHighlightDebounceDuration = Duration(milliseconds: 250);
 
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   final BuildContext _context;
@@ -11,7 +11,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   CodeLineEditingController _controller;
   CodeHighlightTheme? _theme;
-  Timer? _debounceTimer; // <<< ADD THIS
+  Timer? _debounceTimer;
 
   _CodeHighlighter({
     required BuildContext context,
@@ -35,7 +35,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _controller.removeListener(_onCodesChanged);
     _controller = value;
     _controller.addListener(_onCodesChanged);
-    _debounceHighlight(); // <<< MODIFY THIS
+    _debounceHighlight();
   }
 
   set theme(CodeHighlightTheme? value) {
@@ -44,7 +44,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     _theme = value;
     _engine.theme = value;
-    _debounceHighlight(); // <<< MODIFY THIS
+    _debounceHighlight();
   }
 
   IParagraph build({
@@ -66,7 +66,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   @override
   void dispose() {
-    _debounceTimer?.cancel(); // <<< ADD THIS
+    _debounceTimer?.cancel();
     _controller.removeListener(_onCodesChanged);
     _engine.dispose();
     super.dispose();
@@ -154,10 +154,10 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     if (_controller.preValue?.codeLines == _controller.codeLines) {
       return;
     }
-    _debounceHighlight(); // <<< MODIFY THIS
+    _debounceHighlight();
   }
 
-  // <<< ADD THIS NEW METHOD >>>
+  // <<< THIS METHOD IS CORRECTED >>>
   void _debounceHighlight() {
     // If there's an existing timer, cancel it.
     if (_debounceTimer?.isActive ?? false) {
@@ -165,10 +165,9 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     // Start a new timer.
     _debounceTimer = Timer(_kHighlightDebounceDuration, () {
-      // Only process the highlight when the timer fires.
-      if (mounted) { // Check if the ValueNotifier is still mounted
-        _processHighlight();
-      }
+      // The timer callback will not run if the timer has been cancelled,
+      // which happens in dispose(). This is a sufficient check.
+      _processHighlight();
     });
   }
 
@@ -177,7 +176,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 }
 
-// The rest of the file (_CodeHighlightEngine, etc.) remains unchanged.
+// The rest of the file remains unchanged.
 class _CodeHighlightEngine {
   late final _IsolateTasker<_HighlightPayload, List<_HighlightResult>> _tasker;
 
