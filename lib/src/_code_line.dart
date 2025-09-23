@@ -19,6 +19,9 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
   late int _preEditLineIndex;
   CodeLineEditingValue? _preValue;
   GlobalKey? _editorKey;
+  
+  final ValueNotifier<bool> _dirtyNotifier = ValueNotifier<bool>(false);
+  CodeLines? _cleanStateCodeLines;
 
   _CodeLineEditingControllerImpl({
     required CodeLines codeLines,
@@ -27,6 +30,7 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
   }) : super(CodeLineEditingValue(codeLines: codeLines)) {
     _cache = _CodeLineEditingCache(this);
     _preEditLineIndex = -1;
+    _cleanStateCodeLines = codeLines; // Mark the initial state as clean.
   }
 
   factory _CodeLineEditingControllerImpl.fromText(String? text, [
@@ -51,8 +55,31 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
 
   @override
   set value(CodeLineEditingValue value) {
+    final bool codeChanged = !(_preValue?.codeLines.equals(newValue.codeLines) ?? false);
     _preValue = super.value;
     super.value = value;
+    if (codeChanged) {
+      _updateDirtyState();
+    }
+  }
+  
+  void _updateDirtyState() {
+    final bool isCurrentlyDirty = !(_cleanStateCodeLines?.equals(codeLines) ?? false);
+    if (_dirtyNotifier.value != isCurrentlyDirty) {
+      _dirtyNotifier.value = isCurrentlyDirty;
+    }
+  }
+
+  // <<< ADD THESE TWO NEW METHOD IMPLEMENTATIONS >>>
+  @override
+  ValueListenable<bool> get dirty => _dirtyNotifier;
+
+  @override
+  void markCurrentStateAsClean() {
+    _cleanStateCodeLines = codeLines;
+    if (_dirtyNotifier.value) {
+      _dirtyNotifier.value = false;
+    }
   }
 
   @override
@@ -1104,6 +1131,7 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
   void dispose() {
     _editorKey = null;
     _cache.dispose();
+    _dirtyNotifier.dispose(); // <<< ADD THIS LINE
     super.dispose();
   }
 
@@ -2105,6 +2133,14 @@ class _CodeLineEditingControllerDelegate implements CodeLineEditingController {
   @override
   set codeLines(CodeLines value) {
     _delegate.codeLines = value;
+  }
+  
+  override
+  ValueListenable<bool> get dirty => _delegate.dirty;
+
+  @override
+  void markCurrentStateAsClean() {
+    _delegate.markCurrentStateAsClean();
   }
 
   @override

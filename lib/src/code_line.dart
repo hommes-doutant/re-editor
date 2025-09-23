@@ -364,6 +364,19 @@ abstract class CodeLineEditingController extends ValueNotifier<CodeLineEditingVa
   /// Perform an operation. If the editor content changes, it will
   /// be recorded in the undo history.
   void runRevocableOp(VoidCallback op);
+  
+  /// A listenable that notifies when the editor's content dirty state changes.
+  ///
+  /// A dirty state is when the current code content is different from the
+  /// last state that was marked as "clean" via [markCurrentStateAsClean].
+  ValueListenable<bool> get dirty;
+
+  /// Marks the current code content as "clean".
+  ///
+  /// You should call this method after initially loading content into the
+  /// editor or after a successful save operation. This will set the [dirty]
+  /// state to `false`.
+  void markCurrentStateAsClean();
 
   /// Builds [TextSpan] from current editing value.
   /// This can override the code syntax highlighting styles.
