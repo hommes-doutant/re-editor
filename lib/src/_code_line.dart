@@ -54,14 +54,17 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
   }
 
   @override
-  set value(CodeLineEditingValue value) {
+  set value(CodeLineEditingValue newValue) {
+    // This check is important to see if only selection changed
     final bool codeChanged = !(_preValue?.codeLines.equals(newValue.codeLines) ?? false);
     _preValue = super.value;
-    super.value = value;
+    super.value = newValue;
+    // <<< ADD THIS LINE >>>
     if (codeChanged) {
       _updateDirtyState();
     }
   }
+
   
   void _updateDirtyState() {
     final bool isCurrentlyDirty = !(_cleanStateCodeLines?.equals(codeLines) ?? false);
@@ -2135,7 +2138,7 @@ class _CodeLineEditingControllerDelegate implements CodeLineEditingController {
     _delegate.codeLines = value;
   }
   
-  override
+  @override
   ValueListenable<bool> get dirty => _delegate.dirty;
 
   @override
