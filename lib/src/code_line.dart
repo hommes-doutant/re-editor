@@ -184,6 +184,12 @@ abstract class CodeLineEditingController extends ValueNotifier<CodeLineEditingVa
   /// actions, not during the build, layout, or paint phases.
   void edit(TextEditingValue newValue);
 
+  /// Expands the current selection to the nearest chunk boundary that contains it.
+  /// If the selection is already at a chunk boundary, it expands to the next largest containing chunk.
+  ///
+  /// The [chunks] are typically provided by a [CodeChunkController].
+  void selectChunk(List<CodeChunk> chunks);
+
   /// Select a code line at the given index.
   void selectLine(int index);
 

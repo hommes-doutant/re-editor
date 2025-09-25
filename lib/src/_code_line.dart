@@ -288,6 +288,57 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
     _cache.markNewRecord(false);
     makeCursorCenterIfInvisible();
   }
+  
+  @override
+  void selectChunk(List<CodeChunk> chunks) {
+    runRevocableOp(() {
+      _selectChunk(chunks);
+    });
+  }
+
+  void _selectChunk(List<CodeChunk> allChunks) {
+    if (allChunks.isEmpty) {
+      return;
+    }
+
+    final int startIndex = selection.startIndex;
+    final int endIndex = selection.endIndex;
+
+    // Find all chunks that fully contain the current selection.
+    final List<CodeChunk> containingChunks = allChunks.where((chunk) {
+      return chunk.index <= startIndex && chunk.end >= endIndex;
+    }).toList();
+
+    if (containingChunks.isEmpty) {
+      return; // No containing chunk found.
+    }
+
+    // Sort them by size (smallest first) to find the nearest boundary.
+    containingChunks.sort((a, b) => (a.end - a.index).compareTo(b.end - b.index));
+
+    CodeChunk targetChunk = containingChunks.first;
+
+    // Check if the current selection is already perfectly aligned with the smallest chunk.
+    final bool isAlreadySelected = 
+        selection.startIndex == targetChunk.index &&
+        selection.startOffset == 0 &&
+        selection.endIndex == targetChunk.end &&
+        selection.endOffset == codeLines[targetChunk.end].length;
+    
+    // If it is, and there's a larger containing chunk, expand to that one instead.
+    if (isAlreadySelected && containingChunks.length > 1) {
+      targetChunk = containingChunks[1];
+    }
+
+    // Apply the new selection.
+    selection = CodeLineSelection(
+      baseIndex: targetChunk.index, 
+      baseOffset: 0, 
+      extentIndex: targetChunk.end, 
+      extentOffset: codeLines[targetChunk.end].length
+    );
+    makeCursorCenterIfInvisible();
+  }
 
   @override
   void selectLine(int index) {
