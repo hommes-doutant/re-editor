@@ -2558,6 +2558,11 @@ class _CodeLineEditingControllerDelegate implements CodeLineEditingController {
   void selectAll() {
     _delegate.selectAll();
   }
+  
+  @override
+  void selectChunk(List<CodeChunk> chunks) {
+    _delegate.selectChunk(chunks);
+  }
 
   @override
   void selectLine(int index) {
