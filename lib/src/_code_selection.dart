@@ -91,6 +91,7 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
           if (!render.hasFocus) {
             _onMobileTapDown(details.globalPosition);
           }
+          _wasSelectionCollapsedOnTapDown = widget.controller.selection.isCollapsed;    
         },
         behavior: widget.behavior,
         child: widget.child,
@@ -171,7 +172,6 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
     }.contains);
 
   void _onMobileTapDown(Offset position) {
-    _wasSelectionCollapsedOnTapDown = widget.controller.selection.isCollapsed;    
     _selectPosition(position, _SelectionChangedCause.tapDown);
     widget.selectionOverlayController.hideHandle();
     widget.selectionOverlayController.hideToolbar();
