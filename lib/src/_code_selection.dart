@@ -37,6 +37,7 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
   _CodeFieldRender get render => widget.editorKey.currentContext?.findRenderObject() as _CodeFieldRender;
 
   bool _tapping = false;
+  bool _wasSelectionCollapsedOnTapDown = false;
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +55,7 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
         },
         onLongPressStart: (details) {
           _dragPosition = details.globalPosition;
-          widget.inputController.ensureInput();
+          // widget.inputController.ensureInput();
           _longPressOnSelection = _isPositionOnSelection(details.globalPosition);
           if (_longPressOnSelection != true) {
             _onMobileLongPressedStart(details.globalPosition);
@@ -170,6 +171,7 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
     }.contains);
 
   void _onMobileTapDown(Offset position) {
+    _wasSelectionCollapsedOnTapDown = widget.controller.selection.isCollapsed;    
     _selectPosition(position, _SelectionChangedCause.tapDown);
     widget.selectionOverlayController.hideHandle();
     widget.selectionOverlayController.hideToolbar();
@@ -189,7 +191,9 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
       widget.selectionOverlayController.hideHandle();
       widget.selectionOverlayController.hideToolbar();
     }
-    widget.inputController.ensureInput();
+    if (_wasSelectionCollapsedOnTapDown) {
+      widget.inputController.ensureInput();
+    }
   }
 
   void _onMobileLongPressedStart(Offset position) {
