@@ -155,60 +155,52 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       _processFullHighlight();
       return;
     }
+    
+    // --- START OF MODIFIED LOGIC ---
+    // A more robust heuristic is needed for deciding between partial and full highlight.
 
-    // --- START OF CORRECTED LOGIC ---
-    // The key change is here. We now differentiate between structural changes
-    // (insertions/deletions) and simple modifications.
+    const int kPartialHighlightThreshold = 100; // Lines changed threshold
 
-    if (newCodeLines.length != oldCodeLines.length) {
-      // Structural change: a line was added or removed.
-      // We MUST manipulate the cache to keep it in sync.
-      int firstDiff = 0;
-      while (firstDiff < oldCodeLines.length &&
-             firstDiff < newCodeLines.length &&
-             oldCodeLines[firstDiff] == newCodeLines[firstDiff]) {
-        firstDiff++;
-      }
-
-      int lastDiffOld = oldCodeLines.length - 1;
-      int lastDiffNew = newCodeLines.length - 1;
-      while (lastDiffOld >= firstDiff &&
-             lastDiffNew >= firstDiff &&
-             oldCodeLines[lastDiffOld] == newCodeLines[lastDiffNew]) {
-        lastDiffOld--;
-        lastDiffNew--;
-      }
-
-      final int numDeleted = lastDiffOld - firstDiff + 1;
-      final int numAdded = lastDiffNew - firstDiff + 1;
-
-      final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
-      _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
-      
-      // Immediately update the UI with the structurally correct cache.
-      // This correctly shifts highlighting for subsequent lines.
-      value = List.of(_highlightCache);
-
-      // Trigger a partial highlight to fill in the new placeholders.
-      _processPartialHighlight(firstDiff);
-
-    } else {
-      // Modification only: no lines added or removed.
-      // We don't touch the cache or update the UI yet to avoid flicker.
-      int firstDirtyLine = -1;
-      for (int i = 0; i < newCodeLines.length; i++) {
-        if (oldCodeLines[i] != newCodeLines[i]) {
-          firstDirtyLine = i;
-          break;
-        }
-      }
-
-      if (firstDirtyLine != -1) {
-        // Just trigger the partial highlight. The UI will update in the callback.
-        _processPartialHighlight(firstDirtyLine);
-      }
+    // 1. Calculate the diff to find the exact range of changed lines.
+    int firstDiff = 0;
+    while (firstDiff < oldCodeLines.length &&
+           firstDiff < newCodeLines.length &&
+           oldCodeLines[firstDiff] == newCodeLines[firstDiff]) {
+      firstDiff++;
     }
-    // --- END OF CORRECTED LOGIC ---
+
+    int lastDiffOld = oldCodeLines.length - 1;
+    int lastDiffNew = newCodeLines.length - 1;
+    while (lastDiffOld >= firstDiff &&
+           lastDiffNew >= firstDiff &&
+           oldCodeLines[lastDiffOld] == newCodeLines[lastDiffNew]) {
+      lastDiffOld--;
+      lastDiffNew--;
+    }
+
+    final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
+    final int numAdded = max(0, lastDiffNew - firstDiff + 1);
+
+    // 2. New Heuristic: If the number of added lines is large, do a full highlight.
+    // This correctly handles large paste operations.
+    if (numAdded > kPartialHighlightThreshold) {
+      _processFullHighlight();
+      return;
+    }
+
+    // 3. For smaller changes, manipulate the cache and do a partial highlight.
+    // This logic handles both modifications and small insertions/deletions.
+    final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
+    _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
+
+    // Immediately update the UI if the structure changed (lines added/removed).
+    // This prevents highlighting from being misaligned.
+    if (numAdded != numDeleted) {
+      value = List.of(_highlightCache);
+    }
+    
+    _processPartialHighlight(firstDiff);
+    // --- END OF MODIFIED LOGIC ---
   }
 
   void _processFullHighlight() {
@@ -223,14 +215,11 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       _controller.codeLines, 
       dirtyLineIndex, 
       (partialResult) {
-        // Merge the partial results back into our main cache.
         partialResult.forEach((index, result) {
           if (index < _highlightCache.length) {
             _highlightCache[index] = result;
           }
         });
-        // Now, notify listeners with the fully updated cache.
-        // This is the single update that prevents the flicker.
         value = List.of(_highlightCache);
     });
   }
@@ -328,7 +317,7 @@ class _CodeHighlightEngine {
   static Map<int, _HighlightResult> _runPartial(_PartialHighlightPayload payload) {
     const int contextSize = 50;
     final int startLine = max(0, payload.dirtyLineIndex - contextSize);
-    final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize + 1); // +1 to capture more context on modification
+    final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize + 1);
     
     if (startLine >= endLine) {
       return {};
