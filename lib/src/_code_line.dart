@@ -2096,20 +2096,44 @@ class _CodeLineEditingCache {
     if (_node.value == controller.value) {
       return;
     }
-    if (_node.isInitial) {
-      _appendNewNode();
-      return;
+
+    final bool hasContentChanged = !_node.value.codeLines.equals(controller.value.codeLines);
+
+    if (hasContentChanged) {
+      // The text content has changed. This is an editable action.
+      
+      // If the current node is the initial empty state, we must create a new
+      // history entry for the very first edit.
+      if (_node.isInitial) {
+        _appendNewNode();
+        return;
+      }
+
+      // If we are in the middle of the history (e.g., after an undo), this
+      // new edit must clear the "redo" history.
+      if (!_node.isTail) {
+        _appendNewNode();
+        return;
+      }
+      
+      // If `_markNewRecord` is true, it's a new, distinct operation (like a paste or a new word).
+      // We append a new node to the history.
+      if (_markNewRecord) {
+        _markNewRecord = false;
+        _appendNewNode();
+        return;
+      }
+
+      // Otherwise, this is a continuation of the previous edit (e.g., typing characters
+      // in a word). We update the current history node to group these changes.
+      _node.value = controller.value;
+      
+    } else {
+      // The content is the same; only the selection has changed.
+      // We do NOT create a new history entry. We just update the selection in
+      // the current node. This prevents selection from polluting the undo stack.
+      _node.value = controller.value;
     }
-    if (!_node.isTail) {
-      _appendNewNode();
-      return;
-    }
-    if (_markNewRecord) {
-      _markNewRecord = false;
-      _appendNewNode();
-      return;
-    }
-    _node.value = controller.value;
   }
 
   void _appendNewNode() {
