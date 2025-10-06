@@ -1870,6 +1870,17 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
     );
     makeCursorCenterIfInvisible();
   }
+  
+  String _processReplacement(String replacement, Match match) {
+    return replacement.replaceAllMapped(RegExp(r'\$(\d+)'), (m) {
+      final groupIndex = int.tryParse(m.group(1) ?? '');
+      if (groupIndex != null && groupIndex >= 0 && groupIndex <= match.groupCount) {
+        // match.group(0) is the full match, match.group(1) is the first capture group.
+        return match.group(groupIndex) ?? '';
+      }
+      return m.group(0) ?? ''; // Return the original text (e.g., '$99') if group is invalid
+    });
+  }
 
   void _replaceAll(Pattern pattern, String replacement) {
     if (pattern is String && pattern.isEmpty) {
@@ -1877,16 +1888,34 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
     }
     int extentOffset = selection.extentOffset;
     for (int i = 0; i < selection.extentIndex; i++) {
+      // Note: Using charCount is more correct for complex characters
       extentOffset += codeLines[i].charCount + lineBreak.value.length;
     }
     final String preText = text;
     int delta = 0;
-    final String newText = text.replaceAllMapped(pattern, (match) {
-      if (match.end <= extentOffset) {
-        delta += replacement.length - (match.end - match.start);
-      }
-      return replacement;
-    });
+
+    // --- START OF MODIFIED LOGIC ---
+    final String newText;
+    if (pattern is RegExp) {
+      // If the pattern is a RegExp, use replaceAllMapped to handle capture groups.
+      newText = text.replaceAllMapped(pattern, (match) {
+        final processedReplacement = _processReplacement(replacement, match);
+        if (match.end <= extentOffset) {
+          delta += processedReplacement.length - (match.end - match.start);
+        }
+        return processedReplacement;
+      });
+    } else {
+      // Otherwise, use the simple replaceAll for plain string patterns.
+      newText = text.replaceAllMapped(pattern, (match) {
+        if (match.end <= extentOffset) {
+          delta += replacement.length - (match.end - match.start);
+        }
+        return replacement;
+      });
+    }
+    // --- END OF MODIFIED LOGIC ---
+    
     if (preText == newText) {
       return;
     }
