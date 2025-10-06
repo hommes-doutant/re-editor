@@ -8,6 +8,7 @@ class CodeEditorStyle {
     this.fontSize,
     this.fontFamily,
     this.fontHeight,
+    this.fontFeatures,
     this.textColor,
     this.hintTextColor,
     this.backgroundColor,
@@ -65,6 +66,8 @@ class CodeEditorStyle {
   /// See [StrutStyle] and [TextHeightBehavior] for further control of line
   /// height at the paragraph level.
   final double? fontHeight;
+  
+  final List<FontFeature>? fontFeatures;
 
   /// The color to use when painting the text.
   ///
@@ -471,6 +474,7 @@ class _CodeEditorState extends State<CodeEditor> {
       fontSize: widget.style?.fontSize ?? _kDefaultTextSize,
       fontFamily: widget.style?.fontFamily,
       height: widget.style?.fontHeight ?? _kDefaultFontHeight,
+      fontFeatures: widget.style?.fontFeatures,
     );
     final bool readOnly = widget.readOnly ?? false;
     final bool autofocus = widget.autofocus ?? true;
