@@ -55,14 +55,9 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
 
   @override
   set value(CodeLineEditingValue newValue) {
-    // This check is important to see if only selection changed
-    final bool codeChanged = !(_preValue?.codeLines.equals(newValue.codeLines) ?? false);
     _preValue = super.value;
     super.value = newValue;
-    // <<< ADD THIS LINE >>>
-    if (codeChanged) {
-      _updateDirtyState();
-    }
+    _updateDirtyState();
   }
 
   
