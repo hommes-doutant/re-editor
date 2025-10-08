@@ -20,9 +20,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   TextEditingValue? _remoteEditingValue;
   int _contextLineIndex = -1; // The line index our IME context is centered on
 
-  // <<< ADDED: A flag to prevent feedback loops during IME updates. >>>
-  bool _isApplyingImeUpdate = false;
-
   final _CodeFloatingCursorController _floatingCursorController;
   Timer? _floatingCursorScrollTimer;
 
@@ -168,112 +165,99 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     );
 
     // Replace the old context lines with the new ones.
-    // <<< MODIFIED: Removed runRevocableOp from here. >>>
-    final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
-    modifiedCodeLines.addAll(newCodeLines);
-    if (oldContextEndLine < codeLines.length) {
-      modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
-    }
+    _controller.runRevocableOp(() {
+      final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
+      modifiedCodeLines.addAll(newCodeLines);
+      if (oldContextEndLine < codeLines.length) {
+        modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
+      }
 
-    // Convert the selection from the IME (relative to contextText) back to our model's format.
-    final _LineCol basePosition = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
-    final _LineCol extentPosition = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
+      // Convert the selection from the IME (relative to contextText) back to our model's format.
+      final _LineCol basePosition = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
+      final _LineCol extentPosition = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
 
-    final CodeLineSelection newSelection = CodeLineSelection(
-      baseIndex: contextStartLine + basePosition.line,
-      baseOffset: basePosition.col,
-      extentIndex: contextStartLine + extentPosition.line,
-      extentOffset: extentPosition.col,
-      baseAffinity: value.selection.affinity,
-      extentAffinity: value.selection.affinity,
-    );
+      final CodeLineSelection newSelection = CodeLineSelection(
+        baseIndex: contextStartLine + basePosition.line,
+        baseOffset: basePosition.col,
+        extentIndex: contextStartLine + extentPosition.line,
+        extentOffset: extentPosition.col,
+        baseAffinity: value.selection.affinity,
+        extentAffinity: value.selection.affinity,
+      );
 
-    // This assumes composing happens on a single line.
-    final _LineCol composingStartPosition = _convertOffsetToLineCol(value.text, value.composing.start);
-    final _LineCol composingEndPosition = _convertOffsetToLineCol(value.text, value.composing.end);
+      // This assumes composing happens on a single line.
+      final _LineCol composingStartPosition = _convertOffsetToLineCol(value.text, value.composing.start);
+      final _LineCol composingEndPosition = _convertOffsetToLineCol(value.text, value.composing.end);
 
-    final TextRange newComposing = value.composing.isValid
-        ? TextRange(start: composingStartPosition.col, end: composingEndPosition.col)
-        : TextRange.empty;
+      final TextRange newComposing = value.composing.isValid
+          ? TextRange(start: composingStartPosition.col, end: composingEndPosition.col)
+          : TextRange.empty;
 
-    // Directly update the controller's value. We bypass `controller.edit()`
-    // because it's designed for single-line edits.
-    _controller.value = _controller.value.copyWith(
-      codeLines: modifiedCodeLines,
-      selection: newSelection,
-      composing: newComposing,
-    );
-    _controller.makeCursorVisible();
+      // Directly update the controller's value. We bypass `controller.edit()`
+      // because it's designed for single-line edits.
+      _controller.value = _controller.value.copyWith(
+        codeLines: modifiedCodeLines,
+        selection: newSelection,
+        composing: newComposing,
+      );
+      _controller.makeCursorVisible();
+    });
   }
 
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
-    // <<< MODIFIED: The entire method is wrapped to handle state safely. >>>
-    if (_isApplyingImeUpdate) {
-      return; // Avoid re-entrant calls.
+    if (_updateCausedByFloatingCursor) {
+      // This is necessary because otherwise the content of the line where the floating cursor was started
+      // will be pasted over to the line where the floating cursor was stopped.
+      _updateCausedByFloatingCursor = false;
+      return;
     }
-    _isApplyingImeUpdate = true;
-    try {
-      if (_updateCausedByFloatingCursor) {
-        _updateCausedByFloatingCursor = false;
-        return;
-      }
 
-      // Special, optimized handling for newlines.
-      if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
-        TextEditingValue newValue = _remoteEditingValue!;
-        for (final TextEditingDelta delta in textEditingDeltas) {
-          newValue = delta.apply(newValue);
-        }
-        _remoteEditingValue = newValue;
-        _controller.applyNewLine();
-        return;
-      }
-
+    // Special, optimized handling for newlines, as this is a very common operation.
+    if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
       TextEditingValue newValue = _remoteEditingValue!;
-      bool smartChange = false;
-      bool isLargeInsertion = false;
-
       for (final TextEditingDelta delta in textEditingDeltas) {
-        if (delta is TextEditingDeltaInsertion && delta.textInserted.length > 1) {
-          isLargeInsertion = true; // Likely a paste or swipe.
-        } else if (delta is TextEditingDeltaReplacement) {
-          isLargeInsertion = true; // Also an atomic action.
-        }
-
-        if (_autocompleteSymbols) {
-          TextEditingDelta newDelta = _SmartTextEditingDelta(delta).apply(selection);
-          if (newDelta != delta) {
-            smartChange = true;
-          }
-          newValue = newDelta.apply(newValue);
-        } else {
-          newValue = delta.apply(newValue);
-        }
+        newValue = delta.apply(newValue);
       }
-
-      if (newValue == _remoteEditingValue) {
-        return;
-      }
-
-      if (!smartChange) {
-        _remoteEditingValue = newValue;
-      }
-      
-      final valueToApply = newValue.usePrefix ? newValue.removePrefixIfNecessary() : newValue;
-
-      if (isLargeInsertion) {
-        // If it's a large insertion, treat it as a single, revocable operation.
-        _controller.runRevocableOp(() {
-          _applyMultiLineInputValue(valueToApply);
-        });
-      } else {
-        // Otherwise (single char typing, backspace), apply it directly to allow grouping.
-        _applyMultiLineInputValue(valueToApply);
-      }
-    } finally {
-      _isApplyingImeUpdate = false;
+      _remoteEditingValue = newValue;
+      _controller.applyNewLine();
+      return;
     }
+
+    // _Trace.begin('updateEditingValue all');
+    TextEditingValue newValue = _remoteEditingValue!;
+    bool smartChange = false;
+    for (final TextEditingDelta delta in textEditingDeltas) {
+      if (_autocompleteSymbols) {
+        TextEditingDelta newDelta = _SmartTextEditingDelta(delta).apply(selection);
+        if (newDelta != delta) {
+          smartChange = true;
+        }
+        newValue = newDelta.apply(newValue);
+      } else {
+        newValue = delta.apply(newValue);
+      }
+    }
+
+    if (newValue == _remoteEditingValue) {
+      return;
+    }
+
+    if (!smartChange) {
+      _remoteEditingValue = newValue;
+    }
+    
+    if (newValue.usePrefix) {
+      if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
+        _controller.deleteBackward();
+      } else {
+        _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
+      }
+    } else {
+      _applyMultiLineInputValue(newValue);
+    }
+    // Listeners are notified by the controller when its value changes in _applyMultiLineInputValue.
+    // _Trace.end('updateEditingValue all');
   }
 
   @override
@@ -428,8 +412,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   }
 
   void _updateRemoteEditingValueIfNeeded() {
-    // <<< MODIFIED: This is the key change to break the feedback loop. >>>
-    if (!_hasInputConnection || _isApplyingImeUpdate) {
+    if (!_hasInputConnection) {
       return;
     }
     TextEditingValue localValue = _buildTextEditingValue();
@@ -582,7 +565,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   }
 }
 
-// ... The rest of the file (_SmartTextEditingDelta, etc.) remains unchanged ...
 class _SmartTextEditingDelta {
   static const List<_ClosureSymbol> _closureSymbols = [
     _ClosureSymbol('{', '}'),
