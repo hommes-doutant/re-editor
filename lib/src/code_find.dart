@@ -62,33 +62,45 @@ class CodeFindValue {
 }
 
 class CodeFindOption {
-
   final String pattern;
   final bool caseSensitive;
   final bool regex;
+  final bool multiLine;
+  final bool dotAll;
 
   const CodeFindOption({
     required this.pattern,
     required this.caseSensitive,
     required this.regex,
+    this.multiLine = false,
+    this.dotAll = false,
   });
 
   CodeFindOption copyWith({
     String? pattern,
     bool? caseSensitive,
     bool? regex,
+    bool? multiLine,
+    bool? dotAll,
   }) {
     return CodeFindOption(
       pattern: pattern ?? this.pattern,
       caseSensitive: caseSensitive ?? this.caseSensitive,
       regex: regex ?? this.regex,
+      multiLine: multiLine ?? this.multiLine,
+      dotAll: dotAll ?? this.dotAll,
     );
   }
 
   RegExp? get regExp {
     if (regex) {
       try {
-        return RegExp(pattern, caseSensitive: caseSensitive);
+        return RegExp(
+          pattern,
+          caseSensitive: caseSensitive,
+          multiLine: multiLine,
+          dotAll: dotAll
+        );
       } on FormatException {
         return null;
       }
@@ -102,20 +114,21 @@ class CodeFindOption {
     if (identical(this, other)) {
       return true;
     }
-    return other is CodeFindOption
-        && other.pattern == pattern
-        && other.caseSensitive == caseSensitive
-        && other.regex == regex;
+    return other is CodeFindOption &&
+        other.pattern == pattern &&
+        other.caseSensitive == caseSensitive &&
+        other.regex == regex &&
+        other.multiLine == multiLine &&
+        other.dotAll == dotAll;
   }
 
   @override
-  int get hashCode => Object.hash(pattern, caseSensitive, regex);
+  int get hashCode => Object.hash(pattern, caseSensitive, regex, multiLine, dotAll);
 
   @override
   String toString() {
-    return '{pattern: $pattern caseSensitive: $caseSensitive regex: $regex}';
+    return '{pattern: $pattern caseSensitive: $caseSensitive regex: $regex multiLine: $multiLine dotAll: $dotAll}';
   }
-
 }
 
 class CodeFindResult {
@@ -210,6 +223,10 @@ abstract class CodeFindController extends ValueNotifier<CodeFindValue?> {
   void toggleRegex();
 
   void toggleCaseSensitive();
+  
+  void toggleMultiLine();
+
+  void toggleDotAll();
 
   void previousMatch();
 

@@ -208,6 +208,38 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
     );
     _updateResult();
   }
+  
+  @override
+  void toggleMultiLine() {
+    final CodeFindOption? option = value?.option;
+    if (option == null) {
+      return;
+    }
+    value = value?.copyWith(
+      option: option.copyWith(
+        multiLine: !option.multiLine,
+      ),
+      result: null,
+      searching: true
+    );
+    _updateResult();
+  }
+
+  @override
+  void toggleDotAll() {
+    final CodeFindOption? option = value?.option;
+    if (option == null) {
+      return;
+    }
+    value = value?.copyWith(
+      option: option.copyWith(
+        dotAll: !option.dotAll,
+      ),
+      result: null,
+      searching: true
+    );
+    _updateResult();
+  }
 
   @override
   void previousMatch() {
