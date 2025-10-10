@@ -43,7 +43,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _controller.removeListener(_onCodesChanged);
     _controller = value;
     _controller.addListener(_onCodesChanged);
-    _highlightCache.clear();
+    // _highlightcache.clear();
     _processFullHighlight();
   }
 
@@ -53,7 +53,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     _theme = value;
     _engine.theme = value;
-    _highlightCache.clear();
+    // _highlightcache.clear();
     _processFullHighlight();
   }
   
@@ -62,7 +62,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
     _patternRecognizers = value;
-    _highlightCache.clear();
+    // _highlightcache.clear();
     _processFullHighlight();
   }
 
@@ -198,21 +198,110 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 
   TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
-    if (_patternRecognizers == null || _patternRecognizers!.isEmpty) {
-      return TextSpan(
-          children: nodes
-              .map((e) => TextSpan(text: e.value, style: _findStyle(e.className)))
-              .toList(),
-          style: baseStyle);
+    final spans = _buildSpansWithPatterns(nodes);
+    return TextSpan(children: spans, style: baseStyle);
+  }
+  
+  List<InlineSpan> _buildSpansWithPatterns(List<_HighlightNode> nodes) {
+    final plainText = nodes.map((e) => e.value).join();
+
+    if (_patternRecognizers == null || _patternRecognizers!.isEmpty || plainText.isEmpty) {
+      return nodes
+          .map((e) => TextSpan(text: e.value, style: _findStyle(e.className)))
+          .toList();
     }
     
-    final List<InlineSpan> spans = [];
-    for (final node in nodes) {
-      final textStyle = _findStyle(node.className);
-      spans.addAll(_applyPatternRecognizers(node.value, textStyle));
+    // 1. Find all matches on the full line text first.
+    final List<_Match> allMatches = [];
+    for (final recognizer in _patternRecognizers!) {
+      for (final match in recognizer.pattern.allMatches(plainText)) {
+        if (match.start == match.end) continue; // Ignore empty matches
+        allMatches.add(_Match(match.start, match.end, match.group(0)!, recognizer));
+      }
     }
 
-    return TextSpan(children: spans, style: baseStyle);
+    if (allMatches.isEmpty) {
+      return nodes
+          .map((e) => TextSpan(text: e.value, style: _findStyle(e.className)))
+          .toList();
+    }
+
+    // Sort and de-overlap matches (earliest, longest match wins)
+    allMatches.sort((a, b) {
+      final start = a.start.compareTo(b.start);
+      if (start != 0) return start;
+      return (b.end - b.start).compareTo(a.end - a.start);
+    });
+
+    final List<_Match> deoverlappedMatches = [];
+    int lastMatchEnd = -1;
+    for (final match in allMatches) {
+      if (match.start >= lastMatchEnd) {
+        deoverlappedMatches.add(match);
+        lastMatchEnd = match.end;
+      }
+    }
+
+    // 2. Merge syntax nodes with pattern matches
+    final List<InlineSpan> finalSpans = [];
+    int nodeCursor = 0;
+    int matchCursor = 0;
+
+    for (final node in nodes) {
+      final nodeStart = nodeCursor;
+      final nodeEnd = nodeStart + node.value.length;
+      final nodeStyle = _findStyle(node.className);
+      int currentPosInNode = 0;
+
+      while (matchCursor < deoverlappedMatches.length && deoverlappedMatches[matchCursor].start < nodeEnd) {
+        final match = deoverlappedMatches[matchCursor];
+
+        // Part of the node before the current match
+        final int textStart = nodeStart + currentPosInNode;
+        if (match.start > textStart) {
+          final text = plainText.substring(textStart, match.start);
+          finalSpans.add(TextSpan(text: text, style: nodeStyle));
+          currentPosInNode += text.length;
+        }
+
+        // The matched part that is inside this node
+        final int matchStartInNode = max(0, match.start - nodeStart);
+        final int matchEndInNode = min(node.value.length, match.end - nodeStart);
+        
+        if (matchStartInNode < matchEndInNode) {
+          final matchedText = node.value.substring(matchStartInNode, matchEndInNode);
+          final recognizer = match.recognizer;
+          final fullMatchText = match.text; // Closure captures the full match text for onTap
+
+          finalSpans.add(TextSpan(
+            text: matchedText,
+            style: nodeStyle?.merge(recognizer.style) ?? recognizer.style,
+            recognizer: TapGestureRecognizer()..onTap = () => recognizer.onTap?.call(fullMatchText),
+            mouseCursor: recognizer.mouseCursor,
+          ));
+          currentPosInNode = matchEndInNode;
+        }
+
+        // If this match is fully processed, move to the next one
+        if (match.end <= nodeEnd) {
+          matchCursor++;
+        } else {
+          // The match spans across to the next node, so we break
+          // and will continue processing this same match in the next node iteration.
+          break;
+        }
+      }
+
+      // Any remaining part of the node after the last processed match
+      if (currentPosInNode < node.value.length) {
+        final remainingText = node.value.substring(currentPosInNode);
+        finalSpans.add(TextSpan(text: remainingText, style: nodeStyle));
+      }
+
+      nodeCursor = nodeEnd;
+    }
+    
+    return finalSpans;
   }
 
   TextStyle? _findStyle(String? className) {
