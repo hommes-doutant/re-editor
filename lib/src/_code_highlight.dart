@@ -1,5 +1,14 @@
 part of re_editor;
 
+class _Match {
+  final int start;
+  final int end;
+  final String text;
+  final PatternRecognizer recognizer;
+
+  _Match(this.start, this.end, this.text, this.recognizer);
+}
+
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   final BuildContext _context;
   final _CodeParagraphProvider _provider;
@@ -7,6 +16,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   CodeLineEditingController _controller;
   CodeHighlightTheme? _theme;
+  List<PatternRecognizer>? _patternRecognizers; // Add this property
 
   List<_HighlightResult> _highlightCache = [];
 
@@ -14,10 +24,12 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     required BuildContext context,
     required CodeLineEditingController controller,
     CodeHighlightTheme? theme,
+    List<PatternRecognizer>? patternRecognizers, // Add to constructor
   })  : _context = context,
         _provider = _CodeParagraphProvider(),
         _controller = controller,
         _theme = theme,
+        _patternRecognizers = patternRecognizers,
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
     _controller.addListener(_onCodesChanged);
@@ -44,6 +56,16 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _highlightCache.clear();
     _processFullHighlight();
   }
+  
+  set patternRecognizers(List<PatternRecognizer>? value) {
+    if (listEquals(_patternRecognizers, value)) {
+      return;
+    }
+    _patternRecognizers = value;
+    _highlightCache.clear();
+    _processFullHighlight();
+  }
+
 
   @override
   void dispose() {
@@ -116,13 +138,81 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return _buildSpanFromNodes(
         [...startNodes, if (midNode != null) midNode, ...endNodes], style);
   }
+  
+  List<InlineSpan> _applyPatternRecognizers(String text, TextStyle? originalStyle) {
+    if (_patternRecognizers == null || _patternRecognizers!.isEmpty) {
+      return [TextSpan(text: text, style: originalStyle)];
+    }
+
+    final List<_Match> allMatches = [];
+    for (final recognizer in _patternRecognizers!) {
+      for (final match in recognizer.pattern.allMatches(text)) {
+        allMatches.add(_Match(match.start, match.end, match.group(0)!, recognizer));
+      }
+    }
+
+    if (allMatches.isEmpty) {
+      return [TextSpan(text: text, style: originalStyle)];
+    }
+
+    // Sort matches by start index to process them in order
+    allMatches.sort((a, b) => a.start.compareTo(b.start));
+
+    final List<InlineSpan> spans = [];
+    int lastMatchEnd = 0;
+
+    for (final match in allMatches) {
+      // Ignore overlapping matches
+      if (match.start < lastMatchEnd) {
+        continue;
+      }
+
+      // Add the text before this match
+      if (match.start > lastMatchEnd) {
+        spans.add(TextSpan(
+          text: text.substring(lastMatchEnd, match.start),
+          style: originalStyle,
+        ));
+      }
+
+      // Add the matched, tappable text
+      spans.add(TextSpan(
+        text: match.text,
+        style: originalStyle?.merge(match.recognizer.style) ?? match.recognizer.style,
+        recognizer: TapGestureRecognizer()..onTap = () => match.recognizer.onTap?.call(match.text),
+        mouseCursor: match.recognizer.mouseCursor,
+      ));
+
+      lastMatchEnd = match.end;
+    }
+
+    // Add any remaining text after the last match
+    if (lastMatchEnd < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(lastMatchEnd),
+        style: originalStyle,
+      ));
+    }
+
+    return spans;
+  }
 
   TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
-    return TextSpan(
-        children: nodes
-            .map((e) => TextSpan(text: e.value, style: _findStyle(e.className)))
-            .toList(),
-        style: baseStyle);
+    if (_patternRecognizers == null || _patternRecognizers!.isEmpty) {
+      return TextSpan(
+          children: nodes
+              .map((e) => TextSpan(text: e.value, style: _findStyle(e.className)))
+              .toList(),
+          style: baseStyle);
+    }
+    
+    final List<InlineSpan> spans = [];
+    for (final node in nodes) {
+      final textStyle = _findStyle(node.className);
+      spans.addAll(_applyPatternRecognizers(node.value, textStyle));
+    }
+
+    return TextSpan(children: spans, style: baseStyle);
   }
 
   TextStyle? _findStyle(String? className) {

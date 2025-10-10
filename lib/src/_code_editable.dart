@@ -120,6 +120,7 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
       context: context,
       controller: widget.controller,
       theme: widget.codeTheme,
+      patternRecognizers: widget.style.patternRecognizers, // Pass it here
     );
 
     _codeIndicatorValueNotifier = CodeIndicatorValueNotifier(null);
@@ -156,6 +157,9 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
     }
     if (oldWidget.codeTheme != widget.codeTheme) {
       _highlighter.theme = widget.codeTheme;
+    }
+    if (!listEquals(oldWidget.style.patternRecognizers, widget.style.patternRecognizers)) {
+      _highlighter.patternRecognizers = widget.style.patternRecognizers;
     }
     super.didUpdateWidget(oldWidget);
   }
