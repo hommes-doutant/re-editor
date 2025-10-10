@@ -36,6 +36,7 @@ class _CodeEditable extends StatefulWidget {
   final _CodeInputController inputController;
   final _CodeFloatingCursorController floatingCursorController;
   final CodeHighlightTheme? codeTheme;
+  final List<PatternRecognizer>? patternRecognizers;
   final bool readOnly;
   final bool autofocus;
   final bool wordWrap;
@@ -77,6 +78,7 @@ class _CodeEditable extends StatefulWidget {
     required this.inputController,
     required this.floatingCursorController,
     required this.codeTheme,
+    this.patternRecognizers,
     required this.readOnly,
     required this.autofocus,
     required this.wordWrap,
@@ -120,7 +122,7 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
       context: context,
       controller: widget.controller,
       theme: widget.codeTheme,
-      patternRecognizers: widget.style.patternRecognizers, // Pass it here
+      patternRecognizers: widget.patternRecognizers, // Pass it here
     );
 
     _codeIndicatorValueNotifier = CodeIndicatorValueNotifier(null);
@@ -158,8 +160,8 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
     if (oldWidget.codeTheme != widget.codeTheme) {
       _highlighter.theme = widget.codeTheme;
     }
-    if (!listEquals(oldWidget.style.patternRecognizers, widget.style.patternRecognizers)) {
-      _highlighter.patternRecognizers = widget.style.patternRecognizers;
+    if (!listEquals(oldWidget.patternRecognizers, widget.patternRecognizers)) {
+      _highlighter.patternRecognizers = widget.patternRecognizers;
     }
     super.didUpdateWidget(oldWidget);
   }
