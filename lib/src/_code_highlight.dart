@@ -17,6 +17,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   List<PatternRecognizer>? _patternRecognizers;
 
   List<_HighlightResult> _highlightCache = [];
+  bool _disposed = false; // Flag to prevent work after disposal
 
   _CodeHighlighter({
     required BuildContext context,
