@@ -139,63 +139,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         [...startNodes, if (midNode != null) midNode, ...endNodes], style);
   }
   
-  List<InlineSpan> _applyPatternRecognizers(String text, TextStyle? originalStyle) {
-    if (_patternRecognizers == null || _patternRecognizers!.isEmpty) {
-      return [TextSpan(text: text, style: originalStyle)];
-    }
-
-    final List<_Match> allMatches = [];
-    for (final recognizer in _patternRecognizers!) {
-      for (final match in recognizer.pattern.allMatches(text)) {
-        allMatches.add(_Match(match.start, match.end, match.group(0)!, recognizer));
-      }
-    }
-
-    if (allMatches.isEmpty) {
-      return [TextSpan(text: text, style: originalStyle)];
-    }
-
-    // Sort matches by start index to process them in order
-    allMatches.sort((a, b) => a.start.compareTo(b.start));
-
-    final List<InlineSpan> spans = [];
-    int lastMatchEnd = 0;
-
-    for (final match in allMatches) {
-      // Ignore overlapping matches
-      if (match.start < lastMatchEnd) {
-        continue;
-      }
-
-      // Add the text before this match
-      if (match.start > lastMatchEnd) {
-        spans.add(TextSpan(
-          text: text.substring(lastMatchEnd, match.start),
-          style: originalStyle,
-        ));
-      }
-
-      // Add the matched, tappable text
-      spans.add(TextSpan(
-        text: match.text,
-        style: originalStyle?.merge(match.recognizer.style) ?? match.recognizer.style,
-        recognizer: TapGestureRecognizer()..onTap = () => match.recognizer.onTap?.call(match.text),
-        mouseCursor: match.recognizer.mouseCursor,
-      ));
-
-      lastMatchEnd = match.end;
-    }
-
-    // Add any remaining text after the last match
-    if (lastMatchEnd < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(lastMatchEnd),
-        style: originalStyle,
-      ));
-    }
-
-    return spans;
-  }
 
   TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
     if (_patternRecognizers == null || _patternRecognizers!.isEmpty || nodes.isEmpty) {
