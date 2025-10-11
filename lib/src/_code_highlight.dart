@@ -9,6 +9,13 @@ class _Match {
   _Match(this.start, this.end, this.text, this.recognizer);
 }
 
+class _PatternMatch {
+  final Match match;
+  final PatternRecognizer recognizer;
+
+  _PatternMatch(this.match, this.recognizer);
+}
+
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   final BuildContext _context;
   final _CodeParagraphProvider _provider;
@@ -140,11 +147,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
   
 
-class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
-
-  // ... (rest of the class is the same) ...
-
-  // REPLACE the entire _buildSpanFromNodes method with this version.
   TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
     if (_patternRecognizers == null || _patternRecognizers!.isEmpty || nodes.isEmpty) {
       return TextSpan(
@@ -263,7 +265,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
     return TextSpan(children: finalSpans, style: baseStyle);
   }
-}
   
 
 
