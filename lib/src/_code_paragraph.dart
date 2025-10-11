@@ -1,536 +1,341 @@
 part of re_editor;
 
-class _PatternMatch {
-  final Match match;
-  final PatternRecognizer recognizer;
+class _ParagraphImpl extends IParagraph {
 
-  _PatternMatch(this.match, this.recognizer);
-}
+  // Unicode value for a zero width joiner character.
+  static const int _zwjUtf16 = 0x200d;
 
-class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
-  final BuildContext _context;
-  final _CodeParagraphProvider _provider;
-  final _CodeHighlightEngine _engine;
+  final String text;
+  final TextSpan span;
+  final ui.Paragraph paragraph;
+  final bool _trucated;
+  final double _preferredLineHeight;
+  final int _lineCount;
 
-  CodeLineEditingController _controller;
-  CodeHighlightTheme? _theme;
-  List<PatternRecognizer>? _patternRecognizers;
+  // For performance, do not init here
+  Map<TextPosition, Offset?>? _offsets;
 
-  List<_HighlightResult> _highlightCache = [];
+  _ParagraphImpl({
+    required this.text,
+    required this.span,
+    required this.paragraph,
+    required bool trucated,
+    required double preferredLineHeight,
+  }) : _trucated = trucated,
+    _preferredLineHeight = preferredLineHeight,
+    _lineCount = (paragraph.height / preferredLineHeight).ceil();
 
-  _CodeHighlighter({
-    required BuildContext context,
-    required CodeLineEditingController controller,
-    CodeHighlightTheme? theme,
-    List<PatternRecognizer>? patternRecognizers,
-  })  : _context = context,
-        _provider = _CodeParagraphProvider(),
-        _controller = controller,
-        _theme = theme,
-        _patternRecognizers = patternRecognizers,
-        _engine = _CodeHighlightEngine(theme),
-        super(const []) {
-    _controller.addListener(_onCodesChanged);
-    _processFullHighlight();
-  }
+  int get runeLength => text.runes.length;
 
-  set controller(CodeLineEditingController value) {
-    if (_controller == value) {
-      return;
+  int? codeUnitAt(int index) {
+    if (index < 0 || index >= length) {
+      return null;
     }
-    _controller.removeListener(_onCodesChanged);
-    _controller = value;
-    _controller.addListener(_onCodesChanged);
-    _processFullHighlight();
+    return text.codeUnitAt(index);
   }
-
-  set theme(CodeHighlightTheme? value) {
-    if (_theme == value) {
-      return;
-    }
-    _theme = value;
-    _engine.theme = value;
-    _processFullHighlight();
-  }
-  
-  set patternRecognizers(List<PatternRecognizer>? value) {
-    if (listEquals(_patternRecognizers, value)) {
-      return;
-    }
-    _patternRecognizers = value;
-    _processFullHighlight();
-  }
-
 
   @override
-  void dispose() {
-    _controller.removeListener(_onCodesChanged);
-    _engine.dispose();
-    super.dispose();
+  double get width => _applyFloatingPointHack(max(0, paragraph.longestLine));
+
+  @override
+  double get height => lineCount * preferredLineHeight;
+
+  @override
+  double get preferredLineHeight => _preferredLineHeight;
+
+  @override
+  int get length => text.length;
+
+  @override
+  int get lineCount => _lineCount;
+
+  @override
+  bool get trucated => _trucated;
+
+  @override
+  void draw(Canvas canvas, Offset offset) {
+    canvas.drawParagraph(paragraph, offset);
   }
 
-  IParagraph build({
-    required int index,
-    required TextStyle style,
-    required double maxWidth,
-    int? maxLengthSingleLineRendering,
-  }) {
-    _provider.updateBaseStyle(style);
-    _provider.updateMaxLengthSingleLineRendering(maxLengthSingleLineRendering);
-    return _provider.build(
-        _controller.buildTextSpan(
-            context: _context,
-            index: index,
-            textSpan: _buildSpan(index, style),
-            style: style),
-        maxWidth);
+  @override
+  TextPosition getPosition(Offset offset) {
+    final TextPosition position = paragraph.getPositionForOffset(offset);
+    return position;
   }
 
-  TextSpan _buildSpan(int index, TextStyle style) {
-    final String text = _controller.codeLines[index].text;
-    if (index >= value.length) {
-      return TextSpan(text: text, style: style);
+  @override
+  InlineSpan? getSpanForPosition(TextPosition position) {
+    if (position.offset >= length - 1) {
+      return null;
     }
-    final _HighlightResult result = value[index];
-    if (result.nodes.isEmpty) {
-      return TextSpan(text: text, style: style);
-    }
-    if (result.source == text) {
-      return _buildSpanFromNodes(result.nodes, style);
-    }
-    final List<_HighlightNode> startNodes = [];
-    int start = 0;
-    int end = text.length;
-    for (int i = 0; i < result.nodes.length && start < end; i++) {
-      final String value = result.nodes[i].value;
-      if (text.startsWith(value, start)) {
-        startNodes.add(result.nodes[i]);
-        start += value.length;
-      } else {
-        break;
+    return span.getSpanForPosition(position);
+  }
+
+  @override
+  TextRange getRangeForSpan(InlineSpan span) {
+    int offset = 0;
+    this.span.visitChildren((child) {
+      if (identical(child, span)) {
+        return false;
       }
+      offset += child.length;
+      return true;
+    });
+    return TextRange(
+      start: offset,
+      end: offset + span.length
+    );
+  }
+
+  @override
+  TextRange getWord(Offset offset) {
+    return paragraph.getWordBoundary(getPosition(offset));
+  }
+
+  @override
+  TextRange getLineBoundary(TextPosition position) {
+    return paragraph.getLineBoundary(position);
+  }
+
+  @override
+  Offset? getOffset(TextPosition position) {
+    Offset? offset = _offsets?[position];
+    if (offset != null) {
+      return offset;
     }
-    final List<_HighlightNode> endNodes = [];
-    for (int i = result.nodes.length - 1; i >= 0 && start < end; i--) {
-      final String value = result.nodes[i].value;
-      if (text.substring(start, end).endsWith(value)) {
-        endNodes.insert(0, result.nodes[i]);
-        end -= value.length;
-      } else {
-        break;
-      }
+    if (text.isEmpty) {
+      return Offset.zero;
     }
-    final _HighlightNode? midNode;
-    if (startNodes.isEmpty) {
-      midNode = _HighlightNode(text.substring(start, end), result.nodes.isEmpty ? null : result.nodes[0].className);
-    } else if (startNodes.length < result.nodes.length) {
-      midNode = _HighlightNode(text.substring(start, end), result.nodes[startNodes.length].className);
-    } else if (end > start) {
-      midNode = _HighlightNode(text.substring(start, end), result.nodes.last.className);
+    if (position.offset == 0) {
+      return Offset.zero;
+    }
+    if (position.affinity == TextAffinity.downstream) {
+      offset = _getOffsetDownstream(position.offset) ?? _getOffsetUpstream(position.offset);
     } else {
-      midNode = null;
+      offset = _getOffsetUpstream(position.offset) ?? _getOffsetDownstream(position.offset);
     }
-    return _buildSpanFromNodes(
-        [...startNodes, if (midNode != null) midNode, ...endNodes], style);
+    (_offsets ??= {})[position] = offset;
+    return offset;
   }
-  
-  TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
-    if (_patternRecognizers == null || _patternRecognizers!.isEmpty || nodes.isEmpty) {
-      return TextSpan(
-        children: nodes
-            .map((node) => TextSpan(text: node.value, style: _findStyle(node.className)))
-            .toList(),
-        style: baseStyle,
+
+  @override
+  List<Rect> getRangeRects(TextRange range) {
+    if (text.isEmpty) {
+      return [
+        Rect.fromLTWH(0, 0, 0, _preferredLineHeight)
+      ];
+    }
+    if (range.isCollapsed) {
+      return const [];
+    }
+    return paragraph.getBoxesForRange(range.start, range.end, boxHeightStyle: ui.BoxHeightStyle.max).map((e) => e.toRect()).toList();
+  }
+
+  Offset? _getOffsetDownstream(int position) {
+    final int? nextCodeUnit = codeUnitAt(min(position, text.length - 1));
+    if (nextCodeUnit == null) {
+      return null;
+    }
+    // Check for multi-code-unit glyphs such as emojis or zero width joiner.
+    final int graphemeClusterLength = _isUtf16Surrogate(nextCodeUnit) ||
+      _isUnicodeDirectionality(nextCodeUnit) || codeUnitAt(position) == _zwjUtf16 ? 2 : 1;
+    final List<TextBox> boxes = paragraph.getBoxesForRange(position,
+      position + graphemeClusterLength, boxHeightStyle: ui.BoxHeightStyle.strut);
+    if (boxes.isEmpty) {
+      return null;
+    }
+    return Offset(boxes.first.left, boxes.first.top);
+  }
+
+  Offset? _getOffsetUpstream(int position) {
+    final int? prevCodeUnit = codeUnitAt(max(0, position - 1));
+    if (prevCodeUnit == null) {
+      return null;
+    }
+    // Check for multi-code-unit glyphs such as emojis or zero width joiner.
+    final int graphemeClusterLength = _isUtf16Surrogate(prevCodeUnit) ||
+      _isUnicodeDirectionality(prevCodeUnit) || codeUnitAt(position) == _zwjUtf16 ? 2 : 1;
+    final List<TextBox> boxes = paragraph.getBoxesForRange(position - graphemeClusterLength,
+      position, boxHeightStyle: ui.BoxHeightStyle.strut);
+    if (boxes.isEmpty) {
+      return null;
+    }
+    return Offset(boxes.first.right, boxes.first.top);
+  }
+
+  bool _isUtf16Surrogate(int value) {
+    return value & 0xF800 == 0xD800;
+  }
+
+  bool _isUnicodeDirectionality(int value) {
+    return value == 0x200F || value == 0x200E;
+  }
+
+  double _applyFloatingPointHack(double layoutValue) {
+    return layoutValue.ceilToDouble();
+  }
+
+}
+
+class _CodeParagraphProvider {
+
+  final Map<TextSpan, _ParagraphImpl> _cachedParagraphs;
+
+  ui.TextStyle? _style;
+  ui.ParagraphConstraints? _constraints;
+  ui.ParagraphStyle? _paragraphStyle;
+  double? _preferredLineHeight;
+  int? _maxLengthSingleLineRendering;
+
+  _CodeParagraphProvider() : _cachedParagraphs = {};
+
+  void updateBaseStyle(TextStyle style) {
+    final ui.TextStyle uiStyle = style.getTextStyle();
+    if (uiStyle == _style) {
+      return;
+    }
+    _paragraphStyle = style.getParagraphStyle(
+      textAlign: TextAlign.left,
+      textDirection: TextDirection.ltr,
+      strutStyle: StrutStyle(
+        fontSize: style.fontSize,
+        fontFamily: style.fontFamily,
+        height: style.height,
+        forceStrutHeight: true,
+      )
+    );
+    _style = uiStyle;
+    final TextPainter painter = TextPainter(
+      textDirection: TextDirection.ltr,
+    );
+    painter.text = TextSpan(
+      text: '0',
+      style: style
+    );
+    _preferredLineHeight = painter.preferredLineHeight;
+    _cachedParagraphs.clear();
+  }
+
+  void updateMaxLengthSingleLineRendering(int? maxLengthSingleLineRendering) {
+    if (_maxLengthSingleLineRendering == maxLengthSingleLineRendering) {
+      return;
+    }
+    _maxLengthSingleLineRendering = maxLengthSingleLineRendering;
+    _cachedParagraphs.clear();
+  }
+
+  IParagraph build(TextSpan span, double maxWidth) {
+    if (maxWidth != _constraints?.width) {
+      _constraints = ui.ParagraphConstraints(
+        width: maxWidth
       );
+      _cachedParagraphs.clear();
     }
-
-    final plainText = nodes.map((e) => e.value).join();
-    if (plainText.isEmpty) {
-      return TextSpan(children: const [], style: baseStyle);
+    final _ParagraphImpl? cache = _cachedParagraphs[span];
+    if (cache != null) {
+      return cache;
     }
-    
-    final List<_PatternMatch> allMatches = [];
-    for (final recognizer in _patternRecognizers!) {
-      for (final match in recognizer.pattern.allMatches(plainText)) {
-        if (match.start == match.end) continue;
-        allMatches.add(_PatternMatch(match, recognizer));
-      }
+    final _ParagraphImpl impl;
+    final String plainText = span.toPlainText();
+    final int? renderingLength = _maxLengthSingleLineRendering;
+    if (renderingLength != null && plainText.length > renderingLength) {
+      impl = _build(trucate(span, renderingLength), plainText.substring(0, renderingLength), true);
+    } else {
+      impl = _build(span, plainText, false);
     }
-
-    if (allMatches.isEmpty) {
-      return TextSpan(
-        children: nodes
-            .map((node) => TextSpan(text: node.value, style: _findStyle(node.className)))
-            .toList(),
-        style: baseStyle,
-      );
-    }
-
-    allMatches.sort((a, b) {
-      final start = a.match.start.compareTo(b.match.start);
-      if (start != 0) return start;
-      return (b.match.end - b.match.start).compareTo(a.match.end - a.match.start);
-    });
-
-    final List<_PatternMatch> deoverlappedMatches = [];
-    int lastMatchEnd = -1;
-    for (final patternMatch in allMatches) {
-      if (patternMatch.match.start >= lastMatchEnd) {
-        deoverlappedMatches.add(patternMatch);
-        lastMatchEnd = patternMatch.match.end;
-      }
-    }
-    
-    final List<InlineSpan> finalSpans = [];
-    int cursor = 0;
-
-    List<TextSpan> getSpansForRange(int start, int end) {
-      final result = <TextSpan>[];
-      int tempCursor = 0;
-      for (final node in nodes) {
-        final nodeStart = tempCursor;
-        final nodeEnd = nodeStart + node.value.length;
-        if (nodeEnd <= start) {
-          tempCursor = nodeEnd;
-          continue;
-        }
-        if (nodeStart >= end) {
-          break;
-        }
-        final int effectiveStart = max(start, nodeStart);
-        final int effectiveEnd = min(end, nodeEnd);
-        if (effectiveStart < effectiveEnd) {
-          result.add(TextSpan(
-            text: plainText.substring(effectiveStart, effectiveEnd),
-            style: _findStyle(node.className),
-          ));
-        }
-        tempCursor = nodeEnd;
-      }
-      return result;
-    }
-
-    for (final patternMatch in deoverlappedMatches) {
-      final match = patternMatch.match;
-
-      if (match.start > cursor) {
-        finalSpans.addAll(getSpansForRange(cursor, match.start));
-      }
-
-      final recognizer = patternMatch.recognizer;
-      final underlyingSpans = getSpansForRange(match.start, match.end);
-      final builtSpan = recognizer.builder(match, underlyingSpans);
-
-      if (builtSpan is TextSpan && builtSpan.mouseCursor == null && (builtSpan.children == null || builtSpan.children!.isEmpty)) {
-        finalSpans.add(TextSpan(
-          text: builtSpan.text,
-          children: builtSpan.children,
-          style: builtSpan.style,
-          recognizer: builtSpan.recognizer,
-          mouseCursor: recognizer.mouseCursor,
-          onEnter: builtSpan.onEnter,
-          onExit: builtSpan.onExit,
-          semanticsLabel: builtSpan.semanticsLabel,
-          locale: builtSpan.locale,
-          spellOut: builtSpan.spellOut,
-        ));
-      } else {
-        finalSpans.add(builtSpan);
-      }
-      
-      cursor = match.end;
-    }
-
-    if (cursor < plainText.length) {
-      finalSpans.addAll(getSpansForRange(cursor, plainText.length));
-    }
-
-    return TextSpan(children: finalSpans, style: baseStyle);
-  }
-  
-  TextStyle? _findStyle(String? className) {
-    if (className == null) return null;
-    final theme = _theme?.theme;
-    if (theme == null) return null;
-    
-    String current = className;
-    while (true) {
-      final style = theme[current];
-      if (style != null) return style;
-      final index = current.indexOf('-');
-      if (index < 0) break;
-      current = current.substring(index + 1);
-      if (current.isEmpty) break;
-    }
-    return null;
+    _cachedParagraphs[span] = impl;
+    return impl;
   }
 
-  void _onCodesChanged() {
-    final CodeLineEditingValue? preValue = _controller.preValue;
-    if (preValue == null || _controller.codeLines == preValue.codeLines) {
-      return;
-    }
+  TextSpan trucate(TextSpan span, int maxLength) {
+    int currentLength = 0;
 
-    final CodeLines oldCodeLines = preValue.codeLines;
-    final CodeLines newCodeLines = _controller.codeLines;
+    InlineSpan? truncateRecursive(InlineSpan span) {
+      if (currentLength >= maxLength) {
+        return null;
+      }
 
-    if (_highlightCache.isEmpty) {
-      _processFullHighlight();
-      return;
-    }
-    
-    const int kPartialHighlightThreshold = 100;
+      if (span is! TextSpan) {
+        // For non-TextSpan widgets, we can't truncate them, but we must count their length.
+        // We'll assume they are a single character for length counting to avoid complex calculations.
+        currentLength++;
+        return span;
+      }
 
-    int firstDiff = 0;
-    while (firstDiff < oldCodeLines.length &&
-           firstDiff < newCodeLines.length &&
-           oldCodeLines[firstDiff] == newCodeLines[firstDiff]) {
-      firstDiff++;
-    }
-
-    int lastDiffOld = oldCodeLines.length - 1;
-    int lastDiffNew = newCodeLines.length - 1;
-    while (lastDiffOld >= firstDiff &&
-           lastDiffNew >= firstDiff &&
-           oldCodeLines[lastDiffOld] == newCodeLines[lastDiffNew]) {
-      lastDiffOld--;
-      lastDiffNew--;
-    }
-
-    final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
-    final int numAdded = max(0, lastDiffNew - firstDiff + 1);
-
-    if (numAdded > kPartialHighlightThreshold) {
-      _processFullHighlight();
-      return;
-    }
-
-    final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
-    _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
-
-    if (numAdded != numDeleted) {
-      value = List.of(_highlightCache);
-    }
-    
-    _processPartialHighlight(firstDiff);
-  }
-
-  void _processFullHighlight() {
-    _engine.run(_controller.codeLines, (results) {
-        _highlightCache = results;
-        value = results;
-    });
-  }
-
-  void _processPartialHighlight(int dirtyLineIndex) {
-    _engine.runPartial(
-      _controller.codeLines, 
-      dirtyLineIndex, 
-      (partialResult) {
-        partialResult.forEach((index, result) {
-          if (index < _highlightCache.length) {
-            _highlightCache[index] = result;
+      List<InlineSpan>? newChildren;
+      if (span.children != null) {
+        newChildren = [];
+        for (final child in span.children!) {
+          final truncatedChild = truncateRecursive(child);
+          if (truncatedChild != null) {
+            newChildren.add(truncatedChild);
           }
-        });
-        value = List.of(_highlightCache);
-    });
-  }
-}
-
-class _CodeHighlightEngine {
-  late final _IsolateTasker<_HighlightPayload, List<_HighlightResult>> _tasker;
-  late final _IsolateTasker<_PartialHighlightPayload, Map<int, _HighlightResult>> _partialTasker;
-
-  Highlight? _highlight;
-  CodeHighlightTheme? _theme;
-
-  _CodeHighlightEngine(final CodeHighlightTheme? theme) {
-    this.theme = theme;
-    _tasker = _IsolateTasker('CodeHighlightEngine', _run);
-    _partialTasker = _IsolateTasker('PartialCodeHighlightEngine', _runPartial);
-  }
-
-  set theme(CodeHighlightTheme? value) {
-    if (_theme == value) return;
-    _theme = value;
-    final Map<String, CodeHighlightThemeMode>? modes = _theme?.languages;
-    if (modes == null) {
-      _highlight = null;
-    } else {
-      _highlight = Highlight();
-      _highlight!.registerLanguages(modes.map((key, value) => MapEntry(key, value.mode)));
-      for (final plugin in _theme!.plugins) {
-        _highlight!.addPlugin(plugin);
+          if (currentLength >= maxLength) {
+            break;
+          }
+        }
       }
+
+      String? newText = span.text;
+      if (newText != null) {
+        final remainingLength = maxLength - currentLength;
+        if (newText.length > remainingLength) {
+          newText = newText.substring(0, remainingLength);
+        }
+        currentLength += newText.length;
+      }
+
+      if ((newText == null || newText.isEmpty) && (newChildren == null || newChildren.isEmpty)) {
+        return null;
+      }
+
+      if (span is MouseTrackerAnnotationTextSpan) {
+        return MouseTrackerAnnotationTextSpan(
+          text: newText,
+          children: newChildren,
+          style: span.style,
+          recognizer: span.recognizer,
+          mouseCursor: span.mouseCursor,
+          onEnterWithRect: span.onEnterWithRect,
+          onExitWithRect: span.onExitWithRect,
+          semanticsLabel: span.semanticsLabel,
+          locale: span.locale,
+          spellOut: span.spellOut,
+        );
+      }
+      return TextSpan(
+        text: newText,
+        children: newChildren,
+        style: span.style,
+        recognizer: span.recognizer,
+        mouseCursor: span.mouseCursor,
+        onEnter: span.onEnter,
+        onExit: span.onExit,
+        semanticsLabel: span.semanticsLabel,
+        locale: span.locale,
+        spellOut: span.spellOut,
+      );
     }
+
+    return (truncateRecursive(span) as TextSpan?) ?? const TextSpan(text: '');
   }
 
-  void dispose() {
-    _tasker.close();
-    _partialTasker.close();
-  }
-
-  void run(CodeLines codes, IsolateCallback<List<_HighlightResult>> callback) {
-    if (_highlight == null) {
-      callback([]);
-      return;
+  _ParagraphImpl _build(TextSpan span, String plainText, bool trucated) {
+    final ui.ParagraphStyle? style = _paragraphStyle;
+    if (style == null) {
+      throw AssertionError('Must call updateBaseStyle before build Paragraph.');
     }
-    _tasker.run(_createPayload(codes), callback);
-  }
-
-  void runPartial(CodeLines codes, int dirtyLineIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
-    if (_highlight == null) {
-      callback({});
-      return;
-    }
-    _partialTasker.run(_createPartialPayload(codes, dirtyLineIndex), callback);
-  }
-
-  _HighlightPayload _createPayload(CodeLines codes) {
-    final Map<String, CodeHighlightThemeMode> modes = _theme?.languages ?? {};
-    return _HighlightPayload(
-      highlight: _highlight!,
-      codes: codes,
-      languages: modes.keys.toList(),
-      maxSizes: modes.values.map((e) => e.maxSize).toList(),
-      maxLineLengths: modes.values.map((e) => e.maxLineLength).toList(),
+    final ui.ParagraphBuilder builder = ui.ParagraphBuilder(style);
+    span.build(builder);
+    final ui.Paragraph paragraph = builder.build();
+    paragraph.layout(_constraints!);
+    return _ParagraphImpl(
+      text: plainText,
+      span: span,
+      paragraph: paragraph,
+      trucated: trucated,
+      preferredLineHeight: _preferredLineHeight!,
     );
   }
 
-  _PartialHighlightPayload _createPartialPayload(CodeLines codes, int dirtyLineIndex) {
-    final String language = _theme?.languages.keys.isNotEmpty == true 
-      ? _theme!.languages.keys.first 
-      : 'plaintext';
-    return _PartialHighlightPayload(
-      highlight: _highlight!,
-      codes: codes,
-      dirtyLineIndex: dirtyLineIndex,
-      language: language,
-    );
-  }
-
-  @pragma('vm:entry-point')
-  static List<_HighlightResult> _run(_HighlightPayload payload) {
-    final String code = payload.codes.asString(TextLineBreak.lf, false);
-    final HighlightResult result;
-    if (payload.languages.isEmpty) {
-      result = payload.highlight.highlight(code: code, language: 'plaintext');
-    } else if (payload.languages.length == 1) {
-      result = payload.highlight.highlight(code: code, language: payload.languages.first);
-    } else {
-      result = payload.highlight.highlightAuto(code, payload.languages);
-    }
-    final _HighlightLineRenderer renderer = _HighlightLineRenderer();
-    result.render(renderer);
-    return renderer.lineResults;
-  }
-
-  @pragma('vm:entry-point')
-  static Map<int, _HighlightResult> _runPartial(_PartialHighlightPayload payload) {
-    const int contextSize = 50;
-    final int startLine = max(0, payload.dirtyLineIndex - contextSize);
-    final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize + 1);
-    
-    if (startLine >= endLine) {
-      return {};
-    }
-
-    final List<String> linesToHighlight = [];
-    for (int i = startLine; i < endLine; i++) {
-      linesToHighlight.add(payload.codes[i].text);
-    }
-
-    final String textChunk = linesToHighlight.join('\n');
-    final HighlightResult result = payload.highlight.highlight(code: textChunk, language: payload.language);
-    
-    final _HighlightLineRenderer renderer = _HighlightLineRenderer();
-    result.render(renderer);
-    
-    final Map<int, _HighlightResult> updatedResults = {};
-    for (int i = 0; i < renderer.lineResults.length; i++) {
-      final int absoluteLineIndex = startLine + i;
-      if (absoluteLineIndex < payload.codes.length) {
-         updatedResults[absoluteLineIndex] = renderer.lineResults[i];
-      }
-    }
-    
-    return updatedResults;
-  }
-}
-
-class _HighlightPayload {
-  final Highlight highlight;
-  final CodeLines codes;
-  final List<String> languages;
-  final List<int> maxSizes;
-  final List<int> maxLineLengths;
-
-  const _HighlightPayload({
-    required this.highlight, required this.codes, required this.languages,
-    required this.maxSizes, required this.maxLineLengths,
-  });
-}
-
-class _PartialHighlightPayload {
-  final Highlight highlight;
-  final CodeLines codes;
-  final int dirtyLineIndex;
-  final String language;
-
-  const _PartialHighlightPayload({
-    required this.highlight, required this.codes, 
-    required this.dirtyLineIndex, required this.language,
-  });
-}
-
-class _HighlightResult {
-  final List<_HighlightNode> nodes;
-  _HighlightResult(this.nodes);
-  String get source => nodes.map((e) => e.value).join();
-}
-
-class _HighlightNode {
-  final String? className;
-  final String value;
-  const _HighlightNode(this.value, [this.className]);
-}
-
-class _HighlightLineRenderer implements HighlightRenderer {
-  final List<_HighlightResult> lineResults;
-  final List<String?> classNames;
-  _HighlightLineRenderer()
-      : lineResults = [_HighlightResult([])],
-        classNames = [];
-
-  @override
-  void addText(String text) {
-    final String? className = classNames.isEmpty ? null : classNames.last;
-    final List<String> lines = text.split(TextLineBreak.lf.value);
-    lineResults.last.nodes.add(_HighlightNode(lines.first, className));
-    if (lines.length > 1) {
-      for (int i = 1; i < lines.length; i++) {
-        lineResults.add(_HighlightResult([_HighlightNode(lines[i], className)]));
-      }
-    }
-  }
-
-  @override
-  void openNode(DataNode node) {
-    final String? className = classNames.isEmpty ? null : classNames.last;
-    String? newClassName;
-    if (className == null || node.scope == null) {
-      newClassName = node.scope;
-    } else {
-      newClassName = '$className-${node.scope!}';
-    }
-    newClassName = newClassName?.split('.')[0];
-    classNames.add(newClassName);
-  }
-
-  @override
-  void closeNode(DataNode node) {
-    if (classNames.isNotEmpty) {
-      classNames.removeLast();
-    }
-  }
 }
