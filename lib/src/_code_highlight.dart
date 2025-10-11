@@ -31,7 +31,14 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
     _controller.addListener(_onCodesChanged);
-    _processFullHighlight();
+    
+    // The highlighter now schedules its own initial work after the first frame.
+    // This is fully encapsulated.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed) {
+        _processFullHighlight();
+      }
+    });
   }
 
   set controller(CodeLineEditingController value) {
