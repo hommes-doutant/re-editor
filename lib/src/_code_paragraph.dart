@@ -266,39 +266,73 @@ class _CodeParagraphProvider {
 
   TextSpan trucate(TextSpan span, int maxLength) {
     int currentLength = 0;
-    TextSpan truncateSpan(TextSpan span) {
+
+    InlineSpan? truncateRecursive(InlineSpan span) {
       if (currentLength >= maxLength) {
-        return const TextSpan(text: '');
+        return null;
       }
-      String? text = span.text;
-      if (text != null) {
-        int remainingLength = maxLength - currentLength;
-        if (text.length > remainingLength) {
-          text = text.substring(0, remainingLength);
+
+      if (span is! TextSpan) {
+        return span;
+      }
+
+      List<InlineSpan>? newChildren;
+      if (span.children != null) {
+        newChildren = [];
+        for (final child in span.children!) {
+          final truncatedChild = truncateRecursive(child);
+          if (truncatedChild != null) {
+            newChildren.add(truncatedChild);
+          }
+          if (currentLength >= maxLength) {
+            break;
+          }
         }
-        currentLength += text.length;
-        return TextSpan(
-          text: text,
-          style: span.style
+      }
+
+      String? newText = span.text;
+      if (newText != null) {
+        final remainingLength = maxLength - currentLength;
+        if (newText.length > remainingLength) {
+          newText = newText.substring(0, remainingLength);
+        }
+        currentLength += newText.length;
+      }
+
+      if ((newText == null || newText.isEmpty) && (newChildren == null || newChildren.isEmpty)) {
+        return null;
+      }
+
+      // Rebuild the TextSpan, copying ALL properties.
+      if (span is MouseTrackerAnnotationTextSpan) {
+        return MouseTrackerAnnotationTextSpan(
+          text: newText,
+          children: newChildren,
+          style: span.style,
+          recognizer: span.recognizer,
+          mouseCursor: span.mouseCursor,
+          onEnterWithRect: span.onEnterWithRect,
+          onExitWithRect: span.onExitWithRect,
+          semanticsLabel: span.semanticsLabel,
+          locale: span.locale,
+          spellOut: span.spellOut,
         );
       }
-      final List<InlineSpan> children = [];
-      for (InlineSpan child in span.children ?? const []) {
-        if (currentLength >= maxLength) {
-          break;
-        }
-        if (child is TextSpan) {
-          children.add(truncateSpan(child));
-        } else {
-          children.add(child);
-        }
-      }
       return TextSpan(
-        children: children,
-        style: span.style
+        text: newText,
+        children: newChildren,
+        style: span.style,
+        recognizer: span.recognizer,
+        mouseCursor: span.mouseCursor,
+        onEnter: span.onEnter,
+        onExit: span.onExit,
+        semanticsLabel: span.semanticsLabel,
+        locale: span.locale,
+        spellOut: span.spellOut,
       );
     }
-    return truncateSpan(span);
+
+    return (truncateRecursive(span) as TextSpan?) ?? const TextSpan(text: '');
   }
 
   _ParagraphImpl _build(TextSpan span, String plainText, bool trucated) {
