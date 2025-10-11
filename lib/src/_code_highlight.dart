@@ -41,7 +41,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _controller.removeListener(_onCodesChanged);
     _controller = value;
     _controller.addListener(_onCodesChanged);
-    _highlightCache.clear();
     _processFullHighlight();
   }
 
@@ -51,7 +50,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     _theme = value;
     _engine.theme = value;
-    _highlightCache.clear();
     _processFullHighlight();
   }
   
@@ -60,7 +58,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
     _patternRecognizers = value;
-    _highlightCache.clear();
     _processFullHighlight();
   }
 
@@ -94,28 +91,21 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final nodes = result.nodes;
     final rawText = _controller.codeLines[index].text;
 
-    if (_patternRecognizers == null || _patternRecognizers!.isEmpty || rawText.isEmpty) {
-      if (nodes.isEmpty) {
-        return TextSpan(text: rawText, style: style);
-      }
-      return TextSpan(
-        children: nodes
-            .map((node) => TextSpan(text: node.value, style: _findStyle(node.className)))
-            .toList(),
-        style: style,
-      );
-    }
-    
     // 1. Run recognizers on the PRISTINE, RAW text from the controller.
     final List<_PatternMatch> allMatches = [];
-    for (final recognizer in _patternRecognizers!) {
-      for (final match in recognizer.pattern.allMatches(rawText)) {
-        if (match.start == match.end) continue;
-        allMatches.add(_PatternMatch(match, recognizer));
+    if (_patternRecognizers != null && _patternRecognizers!.isNotEmpty && rawText.isNotEmpty) {
+      for (final recognizer in _patternRecognizers!) {
+        for (final match in recognizer.pattern.allMatches(rawText)) {
+          if (match.start == match.end) continue;
+          allMatches.add(_PatternMatch(match, recognizer));
+        }
       }
     }
 
     if (allMatches.isEmpty) {
+       if (nodes.isEmpty) {
+         return TextSpan(text: rawText, style: style);
+       }
        return TextSpan(
         children: nodes
             .map((node) => TextSpan(text: node.value, style: _findStyle(node.className)))
