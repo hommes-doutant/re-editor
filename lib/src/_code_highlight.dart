@@ -14,7 +14,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   CodeLineEditingController _controller;
   CodeHighlightTheme? _theme;
-  List<PatternRecognizer>? _patternRecognizers; // Add this property
+  List<PatternRecognizer>? _patternRecognizers;
 
   List<_HighlightResult> _highlightCache = [];
 
@@ -22,7 +22,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     required BuildContext context,
     required CodeLineEditingController controller,
     CodeHighlightTheme? theme,
-    List<PatternRecognizer>? patternRecognizers, // Add to constructor
+    List<PatternRecognizer>? patternRecognizers,
   })  : _context = context,
         _provider = _CodeParagraphProvider(),
         _controller = controller,
@@ -41,7 +41,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _controller.removeListener(_onCodesChanged);
     _controller = value;
     _controller.addListener(_onCodesChanged);
-    // _highlightcache.clear();
     _processFullHighlight();
   }
 
@@ -51,7 +50,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     _theme = value;
     _engine.theme = value;
-    // _highlightcache.clear();
     _processFullHighlight();
   }
   
@@ -60,7 +58,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
     _patternRecognizers = value;
-    // _highlightcache.clear();
     _processFullHighlight();
   }
 
@@ -137,7 +134,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         [...startNodes, if (midNode != null) midNode, ...endNodes], style);
   }
   
-
   TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
     if (_patternRecognizers == null || _patternRecognizers!.isEmpty || nodes.isEmpty) {
       return TextSpan(
@@ -153,11 +149,10 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return TextSpan(children: const [], style: baseStyle);
     }
     
-    // 1. Find all matches and directly pair them with their recognizer.
     final List<_PatternMatch> allMatches = [];
     for (final recognizer in _patternRecognizers!) {
       for (final match in recognizer.pattern.allMatches(plainText)) {
-        if (match.start == match.end) continue; // Ignore empty matches
+        if (match.start == match.end) continue;
         allMatches.add(_PatternMatch(match, recognizer));
       }
     }
@@ -171,7 +166,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       );
     }
 
-    // Sort matches and remove overlaps (earliest, longest match wins).
     allMatches.sort((a, b) {
       final start = a.match.start.compareTo(b.match.start);
       if (start != 0) return start;
@@ -187,11 +181,9 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       }
     }
     
-    // 2. Reconstruct the line span by iterating through the text.
     final List<InlineSpan> finalSpans = [];
     int cursor = 0;
 
-    // Helper to get the underlying syntax spans for a text range.
     List<TextSpan> getSpansForRange(int start, int end) {
       final result = <TextSpan>[];
       int tempCursor = 0;
@@ -218,42 +210,45 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return result;
     }
 
-    // Process each valid match.
     for (final patternMatch in deoverlappedMatches) {
       final match = patternMatch.match;
 
-      // Add the plain text segment before the match.
       if (match.start > cursor) {
         finalSpans.addAll(getSpansForRange(cursor, match.start));
       }
 
-      // Use the recognizer that was paired with the match.
       final recognizer = patternMatch.recognizer;
       final underlyingSpans = getSpansForRange(match.start, match.end);
       final builtSpan = recognizer.builder(match, underlyingSpans);
 
-      // Apply default mouse cursor if the builder didn't provide one.
-      if (builtSpan is TextSpan && builtSpan.mouseCursor == null) {
+      // --- START OF THE FIX ---
+      // If the builder returns a simple TextSpan (no children) without a mouse cursor,
+      // we can safely add the default mouse cursor by rebuilding it.
+      // Otherwise, we trust the builder created a complex span (e.g., with children)
+      // and we add it as-is, preserving its entire structure.
+      if (builtSpan is TextSpan && builtSpan.mouseCursor == null && (builtSpan.children == null || builtSpan.children!.isEmpty)) {
         finalSpans.add(TextSpan(
           text: builtSpan.text,
           children: builtSpan.children,
           style: builtSpan.style,
           recognizer: builtSpan.recognizer,
-          mouseCursor: recognizer.mouseCursor,
+          mouseCursor: recognizer.mouseCursor, // Add the default
           onEnter: builtSpan.onEnter,
           onExit: builtSpan.onExit,
           semanticsLabel: builtSpan.semanticsLabel,
           locale: builtSpan.locale,
-          spellOut: builtSpan.spellOut
+          spellOut: builtSpan.spellOut,
         ));
       } else {
+        // The builder returned a complex span (with children), a non-TextSpan,
+        // or a span that already has a cursor. Trust it completely.
         finalSpans.add(builtSpan);
       }
+      // --- END OF THE FIX ---
       
       cursor = match.end;
     }
 
-    // Add any remaining text after the last match.
     if (cursor < plainText.length) {
       finalSpans.addAll(getSpansForRange(cursor, plainText.length));
     }
@@ -261,8 +256,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return TextSpan(children: finalSpans, style: baseStyle);
   }
   
-
-
   TextStyle? _findStyle(String? className) {
     if (className == null) return null;
     final theme = _theme?.theme;
@@ -294,12 +287,8 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
     
-    // --- START OF MODIFIED LOGIC ---
-    // A more robust heuristic is needed for deciding between partial and full highlight.
+    const int kPartialHighlightThreshold = 100;
 
-    const int kPartialHighlightThreshold = 100; // Lines changed threshold
-
-    // 1. Calculate the diff to find the exact range of changed lines.
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
            firstDiff < newCodeLines.length &&
@@ -319,26 +308,19 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
 
-    // 2. New Heuristic: If the number of added lines is large, do a full highlight.
-    // This correctly handles large paste operations.
     if (numAdded > kPartialHighlightThreshold) {
       _processFullHighlight();
       return;
     }
 
-    // 3. For smaller changes, manipulate the cache and do a partial highlight.
-    // This logic handles both modifications and small insertions/deletions.
     final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
     _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
 
-    // Immediately update the UI if the structure changed (lines added/removed).
-    // This prevents highlighting from being misaligned.
     if (numAdded != numDeleted) {
       value = List.of(_highlightCache);
     }
     
     _processPartialHighlight(firstDiff);
-    // --- END OF MODIFIED LOGIC ---
   }
 
   void _processFullHighlight() {
