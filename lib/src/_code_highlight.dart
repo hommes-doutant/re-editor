@@ -41,6 +41,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _controller.removeListener(_onCodesChanged);
     _controller = value;
     _controller.addListener(_onCodesChanged);
+    _highlightCache.clear();
     _processFullHighlight();
   }
 
@@ -50,6 +51,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     _theme = value;
     _engine.theme = value;
+    _highlightCache.clear();
     _processFullHighlight();
   }
   
@@ -58,6 +60,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
     _patternRecognizers = value;
+    _highlightCache.clear();
     _processFullHighlight();
   }
 
@@ -217,32 +220,21 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return null;
   }
 
-void _onCodesChanged() {
+  void _onCodesChanged() {
     final CodeLineEditingValue? preValue = _controller.preValue;
-    if (preValue == null || _controller.codeLines.equals(preValue.codeLines)) {
+    if (preValue == null || _controller.codeLines == preValue.codeLines) {
       return;
     }
-
-    if (_highlightCache.isEmpty) {
-      // On initial load (or full theme/language change), create placeholders
-      // for all lines. This allows the renderer to draw plain text immediately,
-      // preventing a blank screen while async highlighting is in progress.
-      _highlightCache = List.generate(
-        _controller.codeLines.length,
-        (_) => _HighlightResult([]),
-      );
-      // Notify listeners to trigger a repaint with the placeholder data.
-      value = List.of(_highlightCache);
-      // Start the full highlighting process in the background.
-      _processFullHighlight();
-      return;
-    }
-
-    // The rest of this logic is for handling subsequent edits without flickering.
-    const int kPartialHighlightThreshold = 100;
 
     final CodeLines oldCodeLines = preValue.codeLines;
     final CodeLines newCodeLines = _controller.codeLines;
+
+    if (_highlightCache.isEmpty) {
+      _processFullHighlight();
+      return;
+    }
+    
+    const int kPartialHighlightThreshold = 100;
 
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
@@ -271,8 +263,6 @@ void _onCodesChanged() {
     final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
     _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
 
-    // Only update the value notifier if lines were added/removed, to resize the view.
-    // The content will be blank momentarily, but it's better than a layout jump.
     if (numAdded != numDeleted) {
       value = List.of(_highlightCache);
     }
