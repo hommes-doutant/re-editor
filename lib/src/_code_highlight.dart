@@ -221,18 +221,13 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       final underlyingSpans = getSpansForRange(match.start, match.end);
       final builtSpan = recognizer.builder(match, underlyingSpans);
 
-      // --- START OF THE FIX ---
-      // If the builder returns a simple TextSpan (no children) without a mouse cursor,
-      // we can safely add the default mouse cursor by rebuilding it.
-      // Otherwise, we trust the builder created a complex span (e.g., with children)
-      // and we add it as-is, preserving its entire structure.
       if (builtSpan is TextSpan && builtSpan.mouseCursor == null && (builtSpan.children == null || builtSpan.children!.isEmpty)) {
         finalSpans.add(TextSpan(
           text: builtSpan.text,
           children: builtSpan.children,
           style: builtSpan.style,
           recognizer: builtSpan.recognizer,
-          mouseCursor: recognizer.mouseCursor, // Add the default
+          mouseCursor: recognizer.mouseCursor,
           onEnter: builtSpan.onEnter,
           onExit: builtSpan.onExit,
           semanticsLabel: builtSpan.semanticsLabel,
@@ -240,11 +235,8 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
           spellOut: builtSpan.spellOut,
         ));
       } else {
-        // The builder returned a complex span (with children), a non-TextSpan,
-        // or a span that already has a cursor. Trust it completely.
         finalSpans.add(builtSpan);
       }
-      // --- END OF THE FIX ---
       
       cursor = match.end;
     }
