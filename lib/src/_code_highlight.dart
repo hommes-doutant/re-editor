@@ -17,7 +17,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   List<PatternRecognizer>? _patternRecognizers;
 
   List<_HighlightResult> _highlightCache = [];
-  bool _disposed = false; // Flag to prevent work after disposal
 
   _CodeHighlighter({
     required BuildContext context,
@@ -32,14 +31,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
     _controller.addListener(_onCodesChanged);
-    
-    // The highlighter now schedules its own initial work after the first frame.
-    // This is fully encapsulated.
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!_disposed) {
-        _processFullHighlight();
-      }
-    });
+    _processFullHighlight();
   }
 
   set controller(CodeLineEditingController value) {
@@ -225,21 +217,26 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     return null;
   }
 
-  void _onCodesChanged() {
+void _onCodesChanged() {
     final CodeLineEditingValue? preValue = _controller.preValue;
-    if (preValue == null || _controller.codeLines == preValue.codeLines) {
+    if (preValue == null || _controller.codeLines.equals(preValue.codeLines)) {
       return;
     }
 
-    final CodeLines oldCodeLines = preValue.codeLines;
-    final CodeLines newCodeLines = _controller.codeLines;
-
+    // THIS IS THE CRUCIAL FIX:
+    // If the cache is empty, it's an initial load or a full theme/language change.
+    // In this case, we must do a full highlight and NOT create placeholders.
+    // The renderer will correctly fall back to plain text while this is running.
     if (_highlightCache.isEmpty) {
       _processFullHighlight();
       return;
     }
-    
+
+    // The rest of this logic is for handling subsequent edits without flickering.
     const int kPartialHighlightThreshold = 100;
+
+    final CodeLines oldCodeLines = preValue.codeLines;
+    final CodeLines newCodeLines = _controller.codeLines;
 
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
@@ -268,6 +265,8 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
     _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
 
+    // Only update the value notifier if lines were added/removed, to resize the view.
+    // The content will be blank momentarily, but it's better than a layout jump.
     if (numAdded != numDeleted) {
       value = List.of(_highlightCache);
     }
