@@ -103,8 +103,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       );
     }
     
-    // --- START: NEW ROBUST LOGIC ---
-    
     // 1. Run recognizers on the PRISTINE, RAW text from the controller.
     final List<_PatternMatch> allMatches = [];
     for (final recognizer in _patternRecognizers!) {
@@ -123,7 +121,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       );
     }
 
-    // 2. Sort and de-overlap matches as before.
+    // 2. Sort and de-overlap matches.
     allMatches.sort((a, b) {
       final start = a.match.start.compareTo(b.match.start);
       if (start != 0) return start;
@@ -147,12 +145,13 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     // Helper to get the underlying syntax-highlighted spans for a given character range.
     List<TextSpan> getSpansForRange(int start, int end) {
       final result = <TextSpan>[];
+      if (start >= end) return result;
+
       int tempCursor = 0;
       for (final node in nodes) {
         final nodeStart = tempCursor;
         final nodeEnd = nodeStart + node.value.length;
 
-        // If the current syntax node is completely outside the range, skip or break.
         if (nodeEnd <= start) {
           tempCursor = nodeEnd;
           continue;
@@ -161,7 +160,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
           break;
         }
         
-        // Find the overlapping part of the syntax node and the requested range.
         final int effectiveStart = max(start, nodeStart);
         final int effectiveEnd = min(end, nodeEnd);
 
@@ -173,8 +171,8 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         }
         tempCursor = nodeEnd;
       }
-      // If there were no syntax nodes at all, return a single span for the raw text.
-      if (nodes.isEmpty && start < end) {
+
+      if (nodes.isEmpty) {
         result.add(TextSpan(text: rawText.substring(start, end)));
       }
       return result;
@@ -183,12 +181,10 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     for (final patternMatch in deoverlappedMatches) {
       final match = patternMatch.match;
 
-      // Add the styled text from before the current match.
       if (match.start > cursor) {
         finalSpans.addAll(getSpansForRange(cursor, match.start));
       }
 
-      // Call the builder for the matched text.
       final recognizer = patternMatch.recognizer;
       final underlyingSpans = getSpansForRange(match.start, match.end);
       final builtSpan = recognizer.builder(match, underlyingSpans);
@@ -197,15 +193,13 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       cursor = match.end;
     }
 
-    // Add any remaining styled text after the last match.
     if (cursor < rawText.length) {
       finalSpans.addAll(getSpansForRange(cursor, rawText.length));
     }
 
     return TextSpan(children: finalSpans, style: style);
-    // --- END: NEW ROBUST LOGIC ---
   }
-
+  
   TextStyle? _findStyle(String? className) {
     if (className == null) return null;
     final theme = _theme?.theme;

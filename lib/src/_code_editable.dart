@@ -108,7 +108,7 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
   late CodeIndicatorValueNotifier _codeIndicatorValueNotifier;
 
   @override
-  bool get wantKeepAlive => true; // <<< NEW LINE
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -122,7 +122,7 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
       context: context,
       controller: widget.controller,
       theme: widget.codeTheme,
-      patternRecognizers: widget.patternRecognizers, // Pass it here
+      patternRecognizers: widget.patternRecognizers,
     );
 
     _codeIndicatorValueNotifier = CodeIndicatorValueNotifier(null);
@@ -195,6 +195,16 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
   @override
   Widget build(BuildContext context) {
     super.build(context);
+
+    // --- START OF DEBUGGING CODE ---
+    // This logic checks if the patternRecognizers property is being passed down correctly.
+    Color? debugBackgroundColor = widget.backgroundColor;
+    if (widget.patternRecognizers != null && widget.patternRecognizers!.isNotEmpty) {
+      // If the list is not null and not empty, force a red background for visual confirmation.
+      debugBackgroundColor = Colors.red.withOpacity(0.3);
+    }
+    // --- END OF DEBUGGING CODE ---
+
     final Widget child = _CodeScrollable(
       axisDirection: AxisDirection.down,
       controller: widget.scrollController.verticalScroller,
@@ -243,7 +253,7 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
         return Container(
           decoration: BoxDecoration(
             border: widget.border,
-            color: widget.backgroundColor,
+            color: debugBackgroundColor, // <-- USE THE DEBUG VARIABLE HERE
             borderRadius: widget.borderRadius,
           ),
           clipBehavior: widget.clipBehavior,
@@ -314,7 +324,6 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
       cursorWidth: widget.cursorWidth,
       padding: widget.padding,
       readOnly: widget.readOnly,
-      // Enable long text rendering when the find is on.
       maxLengthSingleLineRendering: widget.findController.value != null ? null : widget.maxLengthSingleLineRendering,
       startHandleLayerLink: widget.startHandleLayerLink,
       endHandleLayerLink: widget.endHandleLayerLink,
@@ -358,7 +367,6 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
     if (!mounted) {
       return;
     }
-    // Delay 50ms to update the auto-complate prompt words.
     Future.delayed(const Duration(milliseconds: 50), () {
       _updateAutoCompleteState(true);
     });
@@ -459,7 +467,6 @@ class _CodeCursorBlinkController extends ValueNotifier<bool> {
     }
     _timer = Timer.periodic(_kCursorBlinkHalfPeriod, _cursorTick);
     if (kIsAndroid || kIsIOS) {
-      // Wait selection position to update
       Future.delayed(const Duration(milliseconds: 100), () {
         value = true;
       });
