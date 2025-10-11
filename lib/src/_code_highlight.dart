@@ -16,6 +16,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   CodeHighlightTheme? _theme;
   List<PatternRecognizer>? _patternRecognizers;
 
+  int _highlightGeneration = 0;
   List<_HighlightResult> _highlightCache = [];
 
   _CodeHighlighter({
@@ -211,6 +212,8 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 
   void _onCodesChanged() {
+    _highlightGeneration++;
+
     final CodeLineEditingValue? preValue = _controller.preValue;
     if (preValue == null || _controller.codeLines == preValue.codeLines) {
       return;
@@ -261,10 +264,49 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 
   void _processFullHighlight() {
-    _engine.run(_controller.codeLines, (results) {
-        _highlightCache = results;
-        value = results;
-    });
+    _highlightGeneration++;
+    final int generation = _highlightGeneration;
+
+    _highlightCache = List.generate(_controller.codeLines.length, (index) => _HighlightResult([]));
+    value = List.of(_highlightCache);
+
+    _processHighlightChunk(0, generation);
+  }
+
+  void _processHighlightChunk(int startLine, int generation) {
+    if (generation != _highlightGeneration || startLine >= _controller.codeLines.length) {
+      return;
+    }
+
+    const int contextSize = 50;
+    const int chunkSize = contextSize * 2 + 1;
+    final int dirtyLineIndex = startLine + contextSize;
+
+    _engine.runInitialLoadChunk(
+      _controller.codeLines,
+      dirtyLineIndex,
+      (partialResult) {
+        if (generation != _highlightGeneration) {
+          return;
+        }
+
+        bool needsNotify = false;
+        partialResult.forEach((index, result) {
+          if (index < _highlightCache.length) {
+            _highlightCache[index] = result;
+            needsNotify = true;
+          }
+        });
+
+        if (needsNotify) {
+          value = List.of(_highlightCache);
+        }
+
+        Future.delayed(Duration.zero, () {
+          _processHighlightChunk(startLine + chunkSize, generation);
+        });
+      },
+    );
   }
 
   void _processPartialHighlight(int dirtyLineIndex) {
@@ -285,6 +327,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 class _CodeHighlightEngine {
   late final _IsolateTasker<_HighlightPayload, List<_HighlightResult>> _tasker;
   late final _IsolateTasker<_PartialHighlightPayload, Map<int, _HighlightResult>> _partialTasker;
+  late final _IsolateTasker<_PartialHighlightPayload, Map<int, _HighlightResult>> _initialLoadTasker;
 
   Highlight? _highlight;
   CodeHighlightTheme? _theme;
@@ -293,6 +336,7 @@ class _CodeHighlightEngine {
     this.theme = theme;
     _tasker = _IsolateTasker('CodeHighlightEngine', _run);
     _partialTasker = _IsolateTasker('PartialCodeHighlightEngine', _runPartial);
+    _initialLoadTasker = _IsolateTasker('InitialCodeHighlightEngine', _runPartial);
   }
 
   set theme(CodeHighlightTheme? value) {
@@ -313,6 +357,7 @@ class _CodeHighlightEngine {
   void dispose() {
     _tasker.close();
     _partialTasker.close();
+    _initialLoadTasker.close();
   }
 
   void run(CodeLines codes, IsolateCallback<List<_HighlightResult>> callback) {
@@ -329,6 +374,14 @@ class _CodeHighlightEngine {
       return;
     }
     _partialTasker.run(_createPartialPayload(codes, dirtyLineIndex), callback);
+  }
+
+  void runInitialLoadChunk(CodeLines codes, int dirtyLineIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
+    if (_highlight == null) {
+      callback({});
+      return;
+    }
+    _initialLoadTasker.run(_createPartialPayload(codes, dirtyLineIndex), callback);
   }
 
   _HighlightPayload _createPayload(CodeLines codes) {
