@@ -1,14 +1,5 @@
 part of re_editor;
 
-class _Match {
-  final int start;
-  final int end;
-  final String text;
-  final PatternRecognizer recognizer;
-
-  _Match(this.start, this.end, this.text, this.recognizer);
-}
-
 class _PatternMatch {
   final Match match;
   final PatternRecognizer recognizer;
@@ -162,12 +153,11 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return TextSpan(children: const [], style: baseStyle);
     }
     
-    // 1. Find all matches and DIRECTLY PAIR them with their recognizer.
+    // 1. Find all matches and directly pair them with their recognizer.
     final List<_PatternMatch> allMatches = [];
     for (final recognizer in _patternRecognizers!) {
       for (final match in recognizer.pattern.allMatches(plainText)) {
         if (match.start == match.end) continue; // Ignore empty matches
-        // THE CORE FIX: Store the recognizer directly with the match.
         allMatches.add(_PatternMatch(match, recognizer));
       }
     }
@@ -201,7 +191,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final List<InlineSpan> finalSpans = [];
     int cursor = 0;
 
-    // Helper to get the underlying syntax spans for a text range. This is correct.
+    // Helper to get the underlying syntax spans for a text range.
     List<TextSpan> getSpansForRange(int start, int end) {
       final result = <TextSpan>[];
       int tempCursor = 0;
@@ -237,7 +227,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         finalSpans.addAll(getSpansForRange(cursor, match.start));
       }
 
-      // NO LOOKUP NEEDED: We already have the correct recognizer.
+      // Use the recognizer that was paired with the match.
       final recognizer = patternMatch.recognizer;
       final underlyingSpans = getSpansForRange(match.start, match.end);
       final builtSpan = recognizer.builder(match, underlyingSpans);
@@ -250,6 +240,11 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
           style: builtSpan.style,
           recognizer: builtSpan.recognizer,
           mouseCursor: recognizer.mouseCursor,
+          onEnter: builtSpan.onEnter,
+          onExit: builtSpan.onExit,
+          semanticsLabel: builtSpan.semanticsLabel,
+          locale: builtSpan.locale,
+          spellOut: builtSpan.spellOut
         ));
       } else {
         finalSpans.add(builtSpan);
