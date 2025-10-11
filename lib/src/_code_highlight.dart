@@ -87,85 +87,43 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 
   TextSpan _buildSpan(int index, TextStyle style) {
-    final String text = _controller.codeLines[index].text;
-    if (index >= value.length) {
-      return TextSpan(text: text, style: style);
-    }
-    final _HighlightResult result = value[index];
-    if (result.nodes.isEmpty) {
-      return TextSpan(text: text, style: style);
-    }
-    if (result.source == text) {
-      return _buildSpanFromNodes(result.nodes, style);
-    }
-    final List<_HighlightNode> startNodes = [];
-    int start = 0;
-    int end = text.length;
-    for (int i = 0; i < result.nodes.length && start < end; i++) {
-      final String value = result.nodes[i].value;
-      if (text.startsWith(value, start)) {
-        startNodes.add(result.nodes[i]);
-        start += value.length;
-      } else {
-        break;
+    final _HighlightResult result = (index >= value.length) ? _HighlightResult([]) : value[index];
+    final nodes = result.nodes;
+    final rawText = _controller.codeLines[index].text;
+
+    if (_patternRecognizers == null || _patternRecognizers!.isEmpty || rawText.isEmpty) {
+      if (nodes.isEmpty) {
+        return TextSpan(text: rawText, style: style);
       }
-    }
-    final List<_HighlightNode> endNodes = [];
-    for (int i = result.nodes.length - 1; i >= 0 && start < end; i--) {
-      final String value = result.nodes[i].value;
-      if (text.substring(start, end).endsWith(value)) {
-        endNodes.insert(0, result.nodes[i]);
-        end -= value.length;
-      } else {
-        break;
-      }
-    }
-    final _HighlightNode? midNode;
-    if (startNodes.isEmpty) {
-      midNode = _HighlightNode(text.substring(start, end), result.nodes.isEmpty ? null : result.nodes[0].className);
-    } else if (startNodes.length < result.nodes.length) {
-      midNode = _HighlightNode(text.substring(start, end), result.nodes[startNodes.length].className);
-    } else if (end > start) {
-      midNode = _HighlightNode(text.substring(start, end), result.nodes.last.className);
-    } else {
-      midNode = null;
-    }
-    return _buildSpanFromNodes(
-        [...startNodes, if (midNode != null) midNode, ...endNodes], style);
-  }
-  
-  TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
-    if (_patternRecognizers == null || _patternRecognizers!.isEmpty || nodes.isEmpty) {
       return TextSpan(
         children: nodes
             .map((node) => TextSpan(text: node.value, style: _findStyle(node.className)))
             .toList(),
-        style: baseStyle,
+        style: style,
       );
     }
-
-    final plainText = nodes.map((e) => e.value).join();
-    if (plainText.isEmpty) {
-      return TextSpan(children: const [], style: baseStyle);
-    }
     
+    // --- START: NEW ROBUST LOGIC ---
+    
+    // 1. Run recognizers on the PRISTINE, RAW text from the controller.
     final List<_PatternMatch> allMatches = [];
     for (final recognizer in _patternRecognizers!) {
-      for (final match in recognizer.pattern.allMatches(plainText)) {
+      for (final match in recognizer.pattern.allMatches(rawText)) {
         if (match.start == match.end) continue;
         allMatches.add(_PatternMatch(match, recognizer));
       }
     }
 
     if (allMatches.isEmpty) {
-      return TextSpan(
+       return TextSpan(
         children: nodes
             .map((node) => TextSpan(text: node.value, style: _findStyle(node.className)))
             .toList(),
-        style: baseStyle,
+        style: style,
       );
     }
 
+    // 2. Sort and de-overlap matches as before.
     allMatches.sort((a, b) {
       final start = a.match.start.compareTo(b.match.start);
       if (start != 0) return start;
@@ -181,15 +139,20 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       }
     }
     
+    // 3. Reconstruct the TextSpan by compositing the recognizer spans
+    //    on top of the base syntax-highlighted spans.
     final List<InlineSpan> finalSpans = [];
     int cursor = 0;
 
+    // Helper to get the underlying syntax-highlighted spans for a given character range.
     List<TextSpan> getSpansForRange(int start, int end) {
       final result = <TextSpan>[];
       int tempCursor = 0;
       for (final node in nodes) {
         final nodeStart = tempCursor;
         final nodeEnd = nodeStart + node.value.length;
+
+        // If the current syntax node is completely outside the range, skip or break.
         if (nodeEnd <= start) {
           tempCursor = nodeEnd;
           continue;
@@ -197,15 +160,22 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         if (nodeStart >= end) {
           break;
         }
+        
+        // Find the overlapping part of the syntax node and the requested range.
         final int effectiveStart = max(start, nodeStart);
         final int effectiveEnd = min(end, nodeEnd);
+
         if (effectiveStart < effectiveEnd) {
           result.add(TextSpan(
-            text: plainText.substring(effectiveStart, effectiveEnd),
+            text: rawText.substring(effectiveStart, effectiveEnd),
             style: _findStyle(node.className),
           ));
         }
         tempCursor = nodeEnd;
+      }
+      // If there were no syntax nodes at all, return a single span for the raw text.
+      if (nodes.isEmpty && start < end) {
+        result.add(TextSpan(text: rawText.substring(start, end)));
       }
       return result;
     }
@@ -213,41 +183,29 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     for (final patternMatch in deoverlappedMatches) {
       final match = patternMatch.match;
 
+      // Add the styled text from before the current match.
       if (match.start > cursor) {
         finalSpans.addAll(getSpansForRange(cursor, match.start));
       }
 
+      // Call the builder for the matched text.
       final recognizer = patternMatch.recognizer;
       final underlyingSpans = getSpansForRange(match.start, match.end);
       final builtSpan = recognizer.builder(match, underlyingSpans);
-
-      if (builtSpan is TextSpan && builtSpan.mouseCursor == null && (builtSpan.children == null || builtSpan.children!.isEmpty)) {
-        finalSpans.add(TextSpan(
-          text: builtSpan.text,
-          children: builtSpan.children,
-          style: builtSpan.style,
-          recognizer: builtSpan.recognizer,
-          mouseCursor: recognizer.mouseCursor,
-          onEnter: builtSpan.onEnter,
-          onExit: builtSpan.onExit,
-          semanticsLabel: builtSpan.semanticsLabel,
-          locale: builtSpan.locale,
-          spellOut: builtSpan.spellOut,
-        ));
-      } else {
-        finalSpans.add(builtSpan);
-      }
+      finalSpans.add(builtSpan);
       
       cursor = match.end;
     }
 
-    if (cursor < plainText.length) {
-      finalSpans.addAll(getSpansForRange(cursor, plainText.length));
+    // Add any remaining styled text after the last match.
+    if (cursor < rawText.length) {
+      finalSpans.addAll(getSpansForRange(cursor, rawText.length));
     }
 
-    return TextSpan(children: finalSpans, style: baseStyle);
+    return TextSpan(children: finalSpans, style: style);
+    // --- END: NEW ROBUST LOGIC ---
   }
-  
+
   TextStyle? _findStyle(String? className) {
     if (className == null) return null;
     final theme = _theme?.theme;
