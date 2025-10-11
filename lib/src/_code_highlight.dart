@@ -223,11 +223,17 @@ void _onCodesChanged() {
       return;
     }
 
-    // THIS IS THE CRUCIAL FIX:
-    // If the cache is empty, it's an initial load or a full theme/language change.
-    // In this case, we must do a full highlight and NOT create placeholders.
-    // The renderer will correctly fall back to plain text while this is running.
     if (_highlightCache.isEmpty) {
+      // On initial load (or full theme/language change), create placeholders
+      // for all lines. This allows the renderer to draw plain text immediately,
+      // preventing a blank screen while async highlighting is in progress.
+      _highlightCache = List.generate(
+        _controller.codeLines.length,
+        (_) => _HighlightResult([]),
+      );
+      // Notify listeners to trigger a repaint with the placeholder data.
+      value = List.of(_highlightCache);
+      // Start the full highlighting process in the background.
       _processFullHighlight();
       return;
     }
