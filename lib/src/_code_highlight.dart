@@ -1,12 +1,5 @@
 part of re_editor;
 
-class _PatternMatch {
-  final Match match;
-  final PatternRecognizer recognizer;
-
-  _PatternMatch(this.match, this.recognizer);
-}
-
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   final BuildContext _context;
   final _CodeParagraphProvider _provider;
@@ -14,7 +7,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   CodeLineEditingController _controller;
   CodeHighlightTheme? _theme;
-  List<PatternRecognizer>? _patternRecognizers;
 
   int _highlightGeneration = 0;
   List<_HighlightResult> _highlightCache = [];
@@ -23,12 +15,10 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     required BuildContext context,
     required CodeLineEditingController controller,
     CodeHighlightTheme? theme,
-    List<PatternRecognizer>? patternRecognizers,
   })  : _context = context,
         _provider = _CodeParagraphProvider(),
         _controller = controller,
         _theme = theme,
-        _patternRecognizers = patternRecognizers,
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
     _controller.addListener(_onCodesChanged);
@@ -91,19 +81,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final _HighlightResult result = (index >= value.length) ? _HighlightResult([]) : value[index];
     final nodes = result.nodes;
     final rawText = _controller.codeLines[index].text;
-
-    // 1. Run recognizers on the PRISTINE, RAW text from the controller.
-    final List<_PatternMatch> allMatches = [];
-    if (_patternRecognizers != null && _patternRecognizers!.isNotEmpty && rawText.isNotEmpty) {
-      for (final recognizer in _patternRecognizers!) {
-        for (final match in recognizer.pattern.allMatches(rawText)) {
-          if (match.start == match.end) continue;
-          allMatches.add(_PatternMatch(match, recognizer));
-        }
-      }
-    }
-
-    if (allMatches.isEmpty) {
        if (nodes.isEmpty) {
          return TextSpan(text: rawText, style: style);
        }
@@ -114,85 +91,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         style: style,
       );
     }
-
-    // 2. Sort and de-overlap matches.
-    allMatches.sort((a, b) {
-      final start = a.match.start.compareTo(b.match.start);
-      if (start != 0) return start;
-      return (b.match.end - b.match.start).compareTo(a.match.end - a.match.start);
-    });
-
-    final List<_PatternMatch> deoverlappedMatches = [];
-    int lastMatchEnd = -1;
-    for (final patternMatch in allMatches) {
-      if (patternMatch.match.start >= lastMatchEnd) {
-        deoverlappedMatches.add(patternMatch);
-        lastMatchEnd = patternMatch.match.end;
-      }
-    }
     
-    // 3. Reconstruct the TextSpan by compositing the recognizer spans
-    //    on top of the base syntax-highlighted spans.
-    final List<InlineSpan> finalSpans = [];
-    int cursor = 0;
-
-    // Helper to get the underlying syntax-highlighted spans for a given character range.
-    List<TextSpan> getSpansForRange(int start, int end) {
-      final result = <TextSpan>[];
-      if (start >= end) return result;
-
-      int tempCursor = 0;
-      for (final node in nodes) {
-        final nodeStart = tempCursor;
-        final nodeEnd = nodeStart + node.value.length;
-
-        if (nodeEnd <= start) {
-          tempCursor = nodeEnd;
-          continue;
-        }
-        if (nodeStart >= end) {
-          break;
-        }
-        
-        final int effectiveStart = max(start, nodeStart);
-        final int effectiveEnd = min(end, nodeEnd);
-
-        if (effectiveStart < effectiveEnd) {
-          result.add(TextSpan(
-            text: rawText.substring(effectiveStart, effectiveEnd),
-            style: _findStyle(node.className),
-          ));
-        }
-        tempCursor = nodeEnd;
-      }
-
-      if (nodes.isEmpty) {
-        result.add(TextSpan(text: rawText.substring(start, end)));
-      }
-      return result;
-    }
-
-    for (final patternMatch in deoverlappedMatches) {
-      final match = patternMatch.match;
-
-      if (match.start > cursor) {
-        finalSpans.addAll(getSpansForRange(cursor, match.start));
-      }
-
-      final recognizer = patternMatch.recognizer;
-      final underlyingSpans = getSpansForRange(match.start, match.end);
-      final builtSpan = recognizer.builder(match, underlyingSpans);
-      finalSpans.add(builtSpan);
-      
-      cursor = match.end;
-    }
-
-    if (cursor < rawText.length) {
-      finalSpans.addAll(getSpansForRange(cursor, rawText.length));
-    }
-
-    return TextSpan(children: finalSpans, style: style);
-  }
   
   TextStyle? _findStyle(String? className) {
     if (className == null) return null;

@@ -19,7 +19,6 @@ class CodeEditorStyle {
     this.cursorLineColor,
     this.chunkIndicatorColor,
     this.codeTheme,
-    this.patternRecognizers,
   }) : assert(fontSize == null || fontSize > 0),
     assert(fontHeight == null || fontHeight >= 1.0),
     assert(cursorWidth == null || cursorWidth > 0);
@@ -128,9 +127,6 @@ class CodeEditorStyle {
   /// The code syntax highlighting rules and styles.
   final CodeHighlightTheme? codeTheme;
 
-  /// A list of pattern recognizers to apply to the text for special
-  /// styling and interactions, such as making URLs clickable.
-  final List<PatternRecognizer>? patternRecognizers; // Add this property
 
 }
 
@@ -481,7 +477,6 @@ class _CodeEditorState extends State<CodeEditor> {
       height: widget.style?.fontHeight ?? _kDefaultFontHeight,
       fontFeatures: widget.style?.fontFeatures,
     );
-    final List<PatternRecognizer>? patternRecognizers = widget.style?.patternRecognizers;
     final bool readOnly = widget.readOnly ?? false;
     final bool autofocus = widget.autofocus ?? true;
     final bool wordWrap = widget.wordWrap ?? true;
@@ -493,7 +488,6 @@ class _CodeEditorState extends State<CodeEditor> {
       scrollbarBuilder: widget.scrollbarBuilder,
       verticalScrollbarWidth: widget.verticalScrollbarWidth,
       horizontalScrollbarHeight: widget.horizontalScrollbarHeight,
-      patternRecognizers: patternRecognizers,
       textStyle: baseStyle.copyWith(
         color: widget.style?.textColor ?? theme.textTheme.bodyLarge?.color,
       ),

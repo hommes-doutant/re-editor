@@ -44,7 +44,6 @@ part 'code_indicator.dart';
 part 'code_line.dart';
 part 'code_lines.dart';
 part 'code_paragraph.dart';
-part 'code_pattern_recognizer.dart';
 part 'code_shortcuts.dart';
 part 'code_scroll.dart';
 part 'code_span.dart';
