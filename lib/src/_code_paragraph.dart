@@ -213,7 +213,7 @@ class _CodeParagraphProvider {
       style: style
     );
     _preferredLineHeight = painter.preferredLineHeight;
-    _cachedParagraphs.clear();
+    clearCache();
   }
 
   void updateMaxLengthSingleLineRendering(int? maxLengthSingleLineRendering) {
@@ -221,7 +221,7 @@ class _CodeParagraphProvider {
       return;
     }
     _maxLengthSingleLineRendering = maxLengthSingleLineRendering;
-    _cachedParagraphs.clear();
+    clearCache();
   }
 
   IParagraph build(TextSpan span, double maxWidth) {
@@ -229,7 +229,7 @@ class _CodeParagraphProvider {
       _constraints = ui.ParagraphConstraints(
         width: maxWidth
       );
-      _cachedParagraphs.clear();
+      clearCache();
     }
     final _ParagraphImpl? cache = _cachedParagraphs[span];
     if (cache != null) {
@@ -318,6 +318,10 @@ class _CodeParagraphProvider {
     }
 
     return (truncateRecursive(span) as TextSpan?) ?? const TextSpan(text: '');
+  }
+
+  void clearCache() {
+    _cachedParagraphs.clear();
   }
 
   _ParagraphImpl _build(TextSpan span, String plainText, bool trucated) {

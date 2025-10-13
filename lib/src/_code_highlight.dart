@@ -69,6 +69,11 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         maxWidth);
   }
 
+  void clearCache() {
+    _provider.clearCache();
+  }
+
+
   TextSpan _buildSpan(int index, TextStyle style) {
     final String text = _controller.codeLines[index].text;
     if (index >= value.length) {

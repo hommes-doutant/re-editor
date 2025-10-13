@@ -334,13 +334,18 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
         // Only turn on the preview cursor if we are away from the end of the line (relatively to the font size)
         if (snappedNewOffset != null && adjustedClampedUpdatedOffset.dx > snappedNewOffset.dx + render.textStyle.fontSize!) {
           _floatingCursorController.setFloatingCursorPositions(
-              floatingCursorOffset: clampedUpdatedOffset,
-              previewCursorOffset: snappedNewOffset,
-              finalCursorOffset: snappedNewOffset,
-              finalCursorSelection: newSelection);
-        } else {
+            floatingCursorOffset: clampedUpdatedOffset,
+            previewCursorOffset: snappedNewOffset,
+            finalCursorOffset: snappedNewOffset,
+            finalCursorSelection:newSelection
+          );
+        }
+        else {
           _floatingCursorController.setFloatingCursorPositions(
-              floatingCursorOffset: clampedUpdatedOffset, finalCursorOffset: snappedNewOffset, finalCursorSelection: newSelection);
+            floatingCursorOffset: clampedUpdatedOffset,
+            finalCursorOffset: snappedNewOffset,
+            finalCursorSelection: newSelection
+          );
         }
 
         break;
@@ -354,7 +359,9 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
         }
 
         final CodeLinePosition finalPosition = CodeLinePosition(
-            index: selection.baseIndex, offset: selection.baseOffset, affinity: selection.baseAffinity);
+          index: selection.baseIndex,
+          offset: selection.baseOffset,
+          affinity: selection.baseAffinity);
 
         final Offset? finalOffset = render.calculateTextPositionViewportOffset(finalPosition);
 
@@ -362,10 +369,14 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
         // Otherwise, play the floating cursor reset animation.
         if (finalOffset != null && (finalOffset.dx < 0 || finalOffset.dy < 0)) {
           render.makePositionCenterIfInvisible(
-              CodeLinePosition(index: selection.baseIndex, offset: selection.baseOffset, affinity: selection.baseAffinity),
-              animated: true);
-          _floatingCursorController.disableFloatingCursor();
-        } else {
+            CodeLinePosition(
+              index: selection.baseIndex,
+              offset: selection.baseOffset,
+              affinity: selection.baseAffinity),
+            animated: true);
+            _floatingCursorController.disableFloatingCursor();
+        }
+        else {
           _floatingCursorController.animateDisableFloatingCursor();
         }
     }
@@ -480,10 +491,23 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   }
 
   void _openInputConnection() {
+    final BuildContext? context = _editorKey?.currentContext;
+    if (context == null) {
+      return;
+    }
     if (!_hasInputConnection) {
-      final TextInputConnection connection = TextInput.attach(
-        this,
-        const TextInputConfiguration(enableDeltaModel: true, inputAction: TextInputAction.newline),
+      // Fix PlatformException issue on new flutter version.
+      // See https://github.com/reqable/re-editor/issues/83
+      final TextInputConnection connection = TextInput.attach(this,
+        _TextInputConfiguration(
+          flutterViewId: View.maybeOf(context)?.viewId ?? 0,
+          enableDeltaModel: true,
+          inputAction: TextInputAction.newline,
+          autocorrect: false,
+          smartDashesType: SmartDashesType.disabled,
+          smartQuotesType: SmartQuotesType.disabled,
+          textCapitalization: TextCapitalization.none,
+        ),
       );
       _remoteEditingValue = _buildTextEditingValue();
       connection.setEditingState(_remoteEditingValue!);
@@ -776,5 +800,28 @@ extension _TextEditingValueExtension on TextEditingValue {
         composing: composing.isValid
             ? TextRange(start: max(0, composing.start - 1), end: max(0, composing.end - 1))
             : null);
+  }
+}
+
+class _TextInputConfiguration extends TextInputConfiguration {
+
+  final int flutterViewId;
+
+  const _TextInputConfiguration({
+    required this.flutterViewId,
+    required super.enableDeltaModel,
+    required super.inputAction,
+    super.autocorrect = false,
+    super.smartDashesType = SmartDashesType.disabled,
+    super.smartQuotesType = SmartQuotesType.disabled,
+    super.textCapitalization = TextCapitalization.none,
+  });
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      ...super.toJson(),
+      'viewId': flutterViewId,
+    };
   }
 }
