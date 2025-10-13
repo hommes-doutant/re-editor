@@ -70,34 +70,91 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 
   TextSpan _buildSpan(int index, TextStyle style) {
-    final _HighlightResult result = (index >= value.length) ? _HighlightResult([]) : value[index];
-    final nodes = result.nodes;
-    final rawText = _controller.codeLines[index].text;
-       if (nodes.isEmpty) {
-         return TextSpan(text: rawText, style: style);
-       }
-       return TextSpan(
-        children: nodes
-            .map((node) => TextSpan(text: node.value, style: _findStyle(node.className)))
-            .toList(),
-        style: style,
+    final String text = _controller.codeLines[index].text;
+    if (index >= value.length) {
+      return TextSpan(
+        text: text,
+        style: style
       );
     }
-    
-  
+    final _HighlightResult result = value[index];
+    if (result.nodes.isEmpty) {
+      return TextSpan(
+        text: text,
+        style: style
+      );
+    }
+    if (result.source == text) {
+      return _buildSpanFromNodes(result.nodes, style);
+    }
+    // Diff the changes and reuse node to avoid style blink.
+    final List<_HighlightNode> startNodes = [];
+    int start = 0;
+    int end = text.length;
+    for (int i = 0; i < result.nodes.length && start < end; i++) {
+      final String value = result.nodes[i].value;
+      if (text.startsWith(value, start)) {
+        startNodes.add(result.nodes[i]);
+        start += value.length;
+      } else {
+        break;
+      }
+    }
+    final List<_HighlightNode> endNodes = [];
+    for (int i = result.nodes.length - 1; i >= 0 && start < end; i--) {
+      final String value = result.nodes[i].value;
+      if (text.substring(start, end).endsWith(value)) {
+        endNodes.insert(0, result.nodes[i]);
+        end -= value.length;
+      } else {
+        break;
+      }
+    }
+    final _HighlightNode? midNode;
+    if (startNodes.isEmpty) {
+      midNode = _HighlightNode(text.substring(start, end), result.nodes[0].className);
+    } else if (startNodes.length < result.nodes.length) {
+      midNode = _HighlightNode(text.substring(start, end), result.nodes[startNodes.length].className);
+    } else if (end > start){
+      midNode = _HighlightNode(text.substring(start, end), result.nodes.last.className);
+    } else {
+      midNode = null;
+    }
+    return _buildSpanFromNodes([
+      ...startNodes,
+      if (midNode != null)
+        midNode,
+      ...endNodes
+    ], style);
+  }
+
+  TextSpan _buildSpanFromNodes(List<_HighlightNode> nodes, TextStyle baseStyle) {
+    return TextSpan(
+      children: nodes.map((e) => TextSpan(
+          text: e.value,
+          style: _findStyle(e.className)
+        )).toList(),
+      style: baseStyle
+    );
+  }
+
   TextStyle? _findStyle(String? className) {
-    if (className == null) return null;
-    final theme = _theme?.theme;
-    if (theme == null) return null;
-    
-    String current = className;
-    while (true) {
-      final style = theme[current];
-      if (style != null) return style;
-      final index = current.indexOf('-');
-      if (index < 0) break;
-      current = current.substring(index + 1);
-      if (current.isEmpty) break;
+    if (className == null) {
+      return null;
+    }
+    while(true) {
+      final TextStyle? style = _theme?.theme[className];
+      if (style != null) {
+        return style;
+      }
+      final int pieceIndex = className!.indexOf('-');
+      if (pieceIndex < 0) {
+        break;
+      }
+      className = className.substring(pieceIndex + 1);
+      if (className.isEmpty) {
+        break;
+      }
     }
     return null;
   }
