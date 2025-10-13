@@ -43,14 +43,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _engine.theme = value;
     _processFullHighlight();
   }
-  
-  set patternRecognizers(List<PatternRecognizer>? value) {
-    if (listEquals(_patternRecognizers, value)) {
-      return;
-    }
-    _patternRecognizers = value;
-    _processFullHighlight();
-  }
 
 
   @override
