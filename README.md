@@ -3,6 +3,8 @@
 ## Fork notice
 This fork is in a sandbox state. It is for me to try new features and fix some bugs, with some of these changes meant to be submitted upstream as PRs at a later date (if they don't cause any design change).
 
+Also, the high numbers of commits is because I compile on a different machine, so many commits do not compile.
+
 ### Fork added features
 - **Dirty/clean state tracking** : Add a flag to tell if the history is in a different state that when last marked clean (useful for file editors)
 - **Undo history behaviour improvements** : Changing the selection doesn't clear the redo nodes
