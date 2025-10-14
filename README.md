@@ -1,5 +1,19 @@
 # Re-Editor
 
+## Fork notice
+This fork is in a sandbox state. It is for me to try new features and fix some bugs, with some of these changes meant to be submitted upstream as PRs at a later date (if they don't cause any design change).
+
+### Fork added features
+- **Dirty/clean state tracking** : Add a flag to tell if the history is in a different state that when last marked clean (useful for file editors)
+- **Undo history behaviour improvements** : Changing the selection doesn't clear the redo nodes
+- **Focus behaviour improvements** : Long tap for selection doesn't bring up the keyboard anymore.
+- **IME change** : We now send 3 lines to the IME instead of one (it fixes text traversal using the Samsung keyboard on android)
+- **Huge Highlight performance improvements** : Code highlighting is now almost instantaneous in most cases, even long files, with some drawbacks (see regressions).
+  
+### Fork regressions
+- **Undo history grouping is mostly broken** : Single keystrokes take a single undo step without being grouped for now.
+- **Highlight does not happen without text change in some edge cases** : Pasting long text usually only partially highlight the text, until a keystroke is made.
+
 [![latest version](https://img.shields.io/pub/v/re_editor.svg?color=blue)](https://pub.dev/packages/re_editor)
 
 [中文版本](./README_CN.md)
