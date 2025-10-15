@@ -6,12 +6,13 @@ This fork is in a sandbox state. It is for me to try new features and fix some b
 Also, the high numbers of commits is because I compile on a different machine, so many commits do not compile.
 
 ### Fork added features
-- **Dirty/clean state tracking** : Add a flag to tell if the history is in a different state that when last marked clean (useful for file editors)
+- **Dirty/clean state tracking** : Add a flag to tell if the history is in a different state that when last marked clean (useful for file editors). And a function to mark an undo node as the "clean" state.
 - **Undo history behaviour improvements** : Changing the selection doesn't clear the redo nodes
-- **Added a function for a chunk selection command** : Using the chunkController
+- **Added a function for a chunk selection command** : Using the chunkController (useful for selecting functions/class, etc)
 - **Focus behaviour improvements** : Long tap for selection doesn't bring up the keyboard anymore.
 - **IME change** : We now send 3 lines to the IME instead of one (it fixes text traversal using the Samsung keyboard on android)
 - **Huge Highlight performance improvements** : Code highlighting is now almost instantaneous in most cases, even long files, with some drawbacks (see regressions).
+- **Search/Replace improvement**: Added support for multiline and dotAll regex flags. Added support for match groups in regex replace with the $ syntax.
   
 ### Fork regressions
 - **Undo history grouping is mostly broken** : Single keystrokes take a single undo step without being grouped for now.
