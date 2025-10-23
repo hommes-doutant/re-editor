@@ -166,6 +166,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   void _onCodesChanged() {
     _highlightGeneration++;
+    final int generation = _highlightGeneration;
 
     final CodeLineEditingValue? preValue = _controller.preValue;
     if (preValue == null || _controller.codeLines == preValue.codeLines) {
@@ -213,7 +214,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       value = List.of(_highlightCache);
     }
     
-    _processPartialHighlight(firstDiff);
+  _processDirtyRangeHighlight(firstDiff, lastDiffNew, generation); // <<< MODIFY THIS LINE
   }
 
   void _processFullHighlight() {
@@ -262,18 +263,63 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     );
   }
 
-  void _processPartialHighlight(int dirtyLineIndex) {
+  // void _processPartialHighlight(int dirtyLineIndex) {
+  //   _engine.runPartial(
+  //     _controller.codeLines, 
+  //     dirtyLineIndex, 
+  //     (partialResult) {
+  //       partialResult.forEach((index, result) {
+  //         if (index < _highlightCache.length) {
+  //           _highlightCache[index] = result;
+  //         }
+  //       });
+  //       value = List.of(_highlightCache);
+  //   });
+  // }
+  
+    void _processDirtyRangeHighlight(int startLine, int endLine, int generation) {
+    if (generation != _highlightGeneration || startLine > endLine) {
+      // Stop if a newer change has occurred or we're done.
+      return;
+    }
+  
+    const int contextSize = 50;
+    const int chunkSize = contextSize * 2 + 1;
+    final int currentChunkStart = startLine;
+    final int dirtyLineInChunk = currentChunkStart + contextSize;
+  
     _engine.runPartial(
-      _controller.codeLines, 
-      dirtyLineIndex, 
+      _controller.codeLines,
+      dirtyLineInChunk, // The engine still works with a single dirty point for its window.
       (partialResult) {
+        if (generation != _highlightGeneration) {
+          return;
+        }
+  
+        bool needsNotify = false;
         partialResult.forEach((index, result) {
           if (index < _highlightCache.length) {
-            _highlightCache[index] = result;
+            // Only update if the result is still valid for the current cache.
+            if (_highlightCache[index].nodes.isEmpty) {
+              _highlightCache[index] = result;
+              needsNotify = true;
+            }
           }
         });
-        value = List.of(_highlightCache);
-    });
+  
+        if (needsNotify) {
+          value = List.of(_highlightCache);
+        }
+  
+        // Schedule the next chunk to be processed.
+        final int nextLine = currentChunkStart + chunkSize;
+        if (nextLine <= endLine) {
+          Future.delayed(Duration.zero, () {
+            _processDirtyRangeHighlight(nextLine, endLine, generation);
+          });
+        }
+      },
+    );
   }
 }
 
