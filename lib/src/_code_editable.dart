@@ -324,7 +324,7 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
     updateKeepAlive();
     if (!widget.focusNode.hasFocus) {
       if (kIsAndroid || kIsIOS) {
-        widget.controller.cancelSelection();
+        // widget.controller.cancelSelection();
       }
       widget.selectionOverlayController.hideHandle();
       widget.selectionOverlayController.hideToolbar();

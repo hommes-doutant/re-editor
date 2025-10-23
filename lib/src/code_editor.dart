@@ -91,6 +91,7 @@ class CodeEditorStyle {
   /// height at the paragraph level.
   final double? fontHeight;
   
+  //TODO: add documentation
   final List<FontFeature>? fontFeatures;
 
   /// The color to use when painting the text.
