@@ -179,9 +179,10 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       _processFullHighlight();
       return;
     }
-    
+    // This is for when triggering multiline code-changes (paste/replace)
     const int kPartialHighlightThreshold = 50;
-
+    const int kPartialSpanThreshold = 50;
+    
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
            firstDiff < newCodeLines.length &&
@@ -200,8 +201,10 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
+    final int totalLinesChanged = numAdded + numDeleted;
+    final int changeSpan = max(0, lastDiffNew - firstDiff + 1);
 
-    if (numAdded > kPartialHighlightThreshold || numDeleted > kPartialHighlightThreshold) {
+    if (numAdded > kPartialHighlightThreshold || numDeleted > kPartialHighlightThreshold || changeSpan > kPartialSpanThreshold) {
       _processFullHighlight();
       return;
     }
