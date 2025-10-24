@@ -12,7 +12,8 @@ dependencies:
   flutter:
     sdk: flutter
   collection: ^1.17.1
-  re_highlight: ^0.0.2
+  re_highlight:
+    path: ../../re-highlight
   re_editor:
     path: ../
 
