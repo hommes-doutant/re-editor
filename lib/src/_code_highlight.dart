@@ -187,7 +187,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
     final CodeLineEditingValue? preValue = _controller.preValue;
     // It's possible the controller state is invalid by the time this runs.
-    if (preValue == null || !mounted) {
+    if (preValue == null) {
       return;
     }
     
