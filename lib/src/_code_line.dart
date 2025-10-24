@@ -1952,6 +1952,7 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
         offset: newExtentOffset
       )
     );
+    forceRepaint();
     makeCursorCenterIfInvisible();
   }
 

@@ -711,6 +711,7 @@ class _CodeFieldRender extends RenderBox implements MouseTrackerAnnotation {
     _displayParagraphs.clear();
     _updateDisplayRenderParagraphs();
     markNeedsPaint();
+    _highlighter.forceFullHighlight();
   }
 
   void autoScrollWhenDragging(Offset dragPosition) {

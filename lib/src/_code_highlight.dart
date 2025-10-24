@@ -51,6 +51,13 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     _engine.dispose();
     super.dispose();
   }
+  
+  /// Forces a re-highlighting of the entire document, discarding any cached results.
+  /// This is useful after operations that make widespread changes, like "replace all".
+  void forceFullHighlight() {
+    _processFullHighlight();
+  }
+
 
   IParagraph build({
     required int index,
@@ -181,7 +188,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     }
     // This is for when triggering multiline code-changes (paste/replace)
     const int kPartialHighlightThreshold = 50;
-    const int kPartialSpanThreshold = 50;
     
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
@@ -201,10 +207,8 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
-    final int totalLinesChanged = numAdded + numDeleted;
-    final int changeSpan = max(0, lastDiffNew - firstDiff + 1);
 
-    if (numAdded > kPartialHighlightThreshold || numDeleted > kPartialHighlightThreshold || changeSpan > kPartialSpanThreshold) {
+    if (numAdded > kPartialHighlightThreshold || numDeleted > kPartialHighlightThreshold) {
       _processFullHighlight();
       return;
     }
