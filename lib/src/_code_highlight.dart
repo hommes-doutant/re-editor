@@ -11,8 +11,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   int _highlightGeneration = 0;
   List<_HighlightResult> _highlightCache = [];
 
-  Timer? _debounceTimer;
-
   _CodeHighlighter({
     required BuildContext context,
     required CodeLineEditingController controller,
@@ -49,7 +47,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   @override
   void dispose() {
-    _debounceTimer?.cancel();
     _controller.removeListener(_onCodesChanged);
     _engine.dispose();
     super.dispose();
@@ -175,23 +172,9 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 
   void _onCodesChanged() {
-    _debounceTimer?.cancel();
-        // Schedule a new one after a short delay.
-    // 200ms is a good starting point. It's short enough to feel responsive
-    // but long enough to group rapid changes (like a replaceAll followed by a scroll).
-    _debounceTimer = Timer(const Duration(milliseconds: 200), _processHighlighting);
-  }
-  
-  void _processHighlighting() {
-    _highlightGeneration++;
 
     final CodeLineEditingValue? preValue = _controller.preValue;
-    // It's possible the controller state is invalid by the time this runs.
-    if (preValue == null) {
-      return;
-    }
-    
-    if (_controller.codeLines == preValue.codeLines) {
+    if (preValue == null || _controller.codeLines == preValue.codeLines) {
       return;
     }
 
@@ -202,9 +185,9 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       _processFullHighlight();
       return;
     }
+    // This is for when triggering multiline code-changes (paste/replace)
+    const int kPartialHighlightThreshold = 50;
     
-    const int kPartialHighlightThreshold = 100;
-
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
            firstDiff < newCodeLines.length &&
@@ -224,11 +207,11 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
 
-    // This logic is now safe because debouncing prevents rapid invalidation.
-    if (numAdded > kPartialHighlightThreshold) {
+    if (numAdded > kPartialHighlightThreshold || numDeleted > kPartialHighlightThreshold) {
       _processFullHighlight();
       return;
     }
+      _highlightGeneration++;
 
     final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
     _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
@@ -237,6 +220,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       value = List.of(_highlightCache);
     }
     
+    _highlightGeneration++;
     _processPartialHighlight(firstDiff);
   }
 
