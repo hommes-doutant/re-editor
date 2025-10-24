@@ -180,7 +180,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
     
-    const int kPartialHighlightThreshold = 100;
+    const int kPartialHighlightThreshold = 50;
 
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
@@ -201,7 +201,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
 
-    if (numAdded > kPartialHighlightThreshold) {
+    if (numAdded > kPartialHighlightThreshold || numDeleted > kPartialHighlightThreshold) {
       _processFullHighlight();
       return;
     }
