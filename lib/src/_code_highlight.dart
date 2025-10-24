@@ -11,13 +11,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   int _highlightGeneration = 0;
   List<_HighlightResult> _highlightCache = [];
 
-  // --- NEW FIELDS ---
-  late _ChunkManager _chunkManager; // <<< ADD THIS
-  final SplayTreeSet<int> _dirtyChunkIndices = SplayTreeSet<int>();
-  bool _isProcessingDirtyChunks = false;
-  int _documentGeneration = 0; // Tracks the version of the entire CodeLines object
-
-
   _CodeHighlighter({
     required BuildContext context,
     required CodeLineEditingController controller,
@@ -28,7 +21,6 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
         _theme = theme,
         _engine = _CodeHighlightEngine(theme),
         super(const []) {
-    _chunkManager = _ChunkManager(_controller, _documentGeneration); // <<< INITIALIZE
     _controller.addListener(_onCodesChanged);
     _processFullHighlight();
   }
@@ -83,16 +75,14 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
 
   TextSpan _buildSpan(int index, TextStyle style) {
-    final (chunkIndex, chunkStartLine) = _chunkManager.findChunkForLine(index);
-    final lineInChunk = index - chunkStartLine;
-    
-    if (chunkIndex >= _chunkManager.chunkCount || lineInChunk >= _chunkManager[chunkIndex].results.length) {
-       return TextSpan(text: _controller.codeLines[index].text, style: style);
-    }
-    
-    final _HighlightResult result = _chunkManager[chunkIndex].results[lineInChunk];
-
     final String text = _controller.codeLines[index].text;
+    if (index >= value.length) {
+      return TextSpan(
+        text: text,
+        style: style
+      );
+    }
+    final _HighlightResult result = value[index];
     if (result.nodes.isEmpty) {
       return TextSpan(
         text: text,
@@ -102,7 +92,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     if (result.source == text) {
       return _buildSpanFromNodes(result.nodes, style);
     }
-    // ... (the existing diffing logic remains here) ...
+    // Diff the changes and reuse node to avoid style blink.
     final List<_HighlightNode> startNodes = [];
     int start = 0;
     int end = text.length;
@@ -175,166 +165,115 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
   }
 
   void _onCodesChanged() {
+    _highlightGeneration++;
+
     final CodeLineEditingValue? preValue = _controller.preValue;
     if (preValue == null || _controller.codeLines == preValue.codeLines) {
       return;
     }
-  
-    _documentGeneration++;
-    final int generation = _documentGeneration;
-    _highlightGeneration++;
-  
-    // --- Diffing logic remains the same ---
+
+    final CodeLines oldCodeLines = preValue.codeLines;
+    final CodeLines newCodeLines = _controller.codeLines;
+
+    if (_highlightCache.isEmpty) {
+      _processFullHighlight();
+      return;
+    }
+    
+    const int kPartialHighlightThreshold = 100;
+
     int firstDiff = 0;
-    while (firstDiff < preValue.codeLines.length &&
-        firstDiff < _controller.codeLines.length &&
-        preValue.codeLines[firstDiff] == _controller.codeLines[firstDiff]) {
+    while (firstDiff < oldCodeLines.length &&
+           firstDiff < newCodeLines.length &&
+           oldCodeLines[firstDiff] == newCodeLines[firstDiff]) {
       firstDiff++;
     }
-  
-    int lastDiffOld = preValue.codeLines.length - 1;
-    int lastDiffNew = _controller.codeLines.length - 1;
+
+    int lastDiffOld = oldCodeLines.length - 1;
+    int lastDiffNew = newCodeLines.length - 1;
     while (lastDiffOld >= firstDiff &&
-        lastDiffNew >= firstDiff &&
-        preValue.codeLines[lastDiffOld] == _controller.codeLines[lastDiffNew]) {
+           lastDiffNew >= firstDiff &&
+           oldCodeLines[lastDiffOld] == newCodeLines[lastDiffNew]) {
       lastDiffOld--;
       lastDiffNew--;
     }
-  
+
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
-  
-    // --- Corrected Logic ---
-    // If the number of lines has changed, it's simpler and more robust to
-    // create a new ChunkManager, which rebuilds the chunk structure from scratch.
-    if (_controller.lineCount != preValue.codeLines.lineCount) {
-      _chunkManager = _ChunkManager(_controller, generation);
-      // After a full rebuild, all chunks are new and need to be highlighted.
-      _dirtyChunkIndices.addAll(List.generate(_chunkManager.chunkCount, (i) => i));
-    } else {
-      // If only content changed (no lines added/removed), use the more efficient
-      // handleEdits method to surgically update the chunk structure.
-      final newDirtyChunks = _chunkManager.handleEdits(firstDiff, numDeleted, numAdded, generation);
-      _dirtyChunkIndices.addAll(newDirtyChunks);
-    }
-  
-    // Trigger the processing loop for all newly dirtied chunks.
-    _processDirtyChunks(generation);
-  }
-  
 
-  
-void _processDirtyChunks(int generation) async {
-  // 1. Singleton Guard: Ensure only one processing loop runs at a time.
-  // If a loop is already active, it will eventually pick up any newly
-  // dirtied chunks we've added to the queue.
-  if (_isProcessingDirtyChunks) {
-    return;
-  }
-  _isProcessingDirtyChunks = true;
-
-  // 2. The Main Loop: Continue as long as there's work to do.
-  while (_dirtyChunkIndices.isNotEmpty) {
-    // 3. Asynchronicity & UI Responsiveness: Yield to the event loop.
-    // This prevents the highlighter from freezing the UI during large updates.
-    await Future.delayed(Duration.zero);
-
-    // 4. Cancellation Check (Post-Await): After yielding, a new edit might have
-    // occurred. If our generation is stale, we must abort this entire run.
-    if (generation != _documentGeneration) {
-      _isProcessingDirtyChunks = false;
+    if (numAdded > kPartialHighlightThreshold) {
+      _processFullHighlight();
       return;
     }
 
-    // 5. Dequeue the next chunk to process.
-    // A SplayTreeSet efficiently gives us the lowest-indexed dirty chunk.
-    final int chunkIndex = _dirtyChunkIndices.first;
-    _dirtyChunkIndices.remove(chunkIndex);
+    final newPlaceholders = List.generate(numAdded, (_) => _HighlightResult([]));
+    _highlightCache.replaceRange(firstDiff, firstDiff + numDeleted, newPlaceholders);
 
-    if (chunkIndex >= _chunkManager.chunkCount) {
-      // This chunk index is no longer valid (e.g., document shrank). Skip it.
-      continue;
+    if (numAdded != numDeleted) {
+      value = List.of(_highlightCache);
     }
-
-    // A Completer to wait for the isolate task to finish before the next loop iteration.
-    // This is crucial for ensuring sequential propagation.
-    final completer = Completer<void>();
-
-    // 6. Prepare data for the isolate.
-    final _HighlightChunk currentChunk = _chunkManager[chunkIndex];
-    final _HighlightChunk oldChunk = _HighlightChunk(currentChunk.results, currentChunk.endState, currentChunk.generation); // Make a copy for later comparison.
-
-    // The starting parser state is the end state of the previous chunk.
-    final HighlightState? startState = chunkIndex > 0 ? _chunkManager[chunkIndex - 1].endState : null;
-
-    // Calculate the line range for this chunk.
-    final int startLine = chunkIndex * _kHighlightChunkSize;
-    final int endLine = startLine + currentChunk.results.length;
-
-    final chunkLines = <String>[];
-    for (int i = startLine; i < endLine; i++) {
-      chunkLines.add(_controller.codeLines[i].text);
-    }
-    final String text = chunkLines.join('\n');
-    final String language = _theme?.languages.keys.firstOrNull ?? 'plaintext';
-
-    // 7. Execute the highlighting task in the isolate.
-    _engine.runChunk(text, language, startState, (result) {
-      // 8. Handle the result in the callback.
-      // Cancellation Check (Post-Isolate): The document could have changed AGAIN
-      // while the isolate was busy. If so, discard this stale result.
-      if (generation != _documentGeneration) {
-        completer.complete();
-        return;
-      }
-
-      // Update the chunk in our manager with the new results.
-      currentChunk.results = result.lineResults;
-      currentChunk.endState = result.endState;
-      currentChunk.generation = generation;
-
-      // 9. Propagation Logic: This is the key to correctness.
-      // If the parser's state at the end of this chunk has changed, it means
-      // the syntax change has "leaked" across the chunk boundary. We must
-      // therefore mark the *next* chunk as dirty to be re-processed.
-      final bool stateChanged = oldChunk.endState != currentChunk.endState;
-      if (stateChanged && (chunkIndex + 1) < _chunkManager.chunkCount) {
-        _dirtyChunkIndices.add(chunkIndex + 1);
-      }
-
-      // 10. Update the UI: Rebuild the flat list of results and notify listeners.
-      _updateValueNotifier();
-
-      // Signal that this iteration of the loop is complete.
-      completer.complete();
-    });
-
-    // Wait for the current chunk to be processed before starting the next one.
-    await completer.future;
-  }
-
-  // 11. Cleanup: All dirty chunks have been processed for this run.
-  _isProcessingDirtyChunks = false;
-}
-  
-  void _updateValueNotifier() {
-    final newValue = <_HighlightResult>[];
-    for (int i = 0; i < _chunkManager.chunkCount; i++) {
-      newValue.addAll(_chunkManager[i].results);
-    }
-    value = newValue;
+    
+    _processPartialHighlight(firstDiff);
   }
 
   void _processFullHighlight() {
-    _documentGeneration++;
     _highlightGeneration++;
-    _dirtyChunkIndices.clear();
+    final int generation = _highlightGeneration;
 
-    // Rebuild via the manager
-    _chunkManager = _ChunkManager(_controller, _documentGeneration);
-    _dirtyChunkIndices.addAll(List.generate(_chunkManager.chunkCount, (i) => i));
+    _highlightCache = List.generate(_controller.codeLines.length, (index) => _HighlightResult([]));
+    value = List.of(_highlightCache);
 
-    _processDirtyChunks(_documentGeneration);
+    _processHighlightChunk(0, generation);
+  }
+
+  void _processHighlightChunk(int startLine, int generation) {
+    if (generation != _highlightGeneration || startLine >= _controller.codeLines.length) {
+      return;
+    }
+
+    const int contextSize = 50;
+    const int chunkSize = contextSize * 2 + 1;
+    final int dirtyLineIndex = startLine + contextSize;
+
+    _engine.runInitialLoadChunk(
+      _controller.codeLines,
+      dirtyLineIndex,
+      (partialResult) {
+        if (generation != _highlightGeneration) {
+          return;
+        }
+
+        bool needsNotify = false;
+        partialResult.forEach((index, result) {
+          if (index < _highlightCache.length) {
+            _highlightCache[index] = result;
+            needsNotify = true;
+          }
+        });
+
+        if (needsNotify) {
+          value = List.of(_highlightCache);
+        }
+
+        Future.delayed(Duration.zero, () {
+          _processHighlightChunk(startLine + chunkSize, generation);
+        });
+      },
+    );
+  }
+
+  void _processPartialHighlight(int dirtyLineIndex) {
+    _engine.runPartial(
+      _controller.codeLines, 
+      dirtyLineIndex, 
+      (partialResult) {
+        partialResult.forEach((index, result) {
+          if (index < _highlightCache.length) {
+            _highlightCache[index] = result;
+          }
+        });
+        value = List.of(_highlightCache);
+    });
   }
 }
 
@@ -342,7 +281,6 @@ class _CodeHighlightEngine {
   late final _IsolateTasker<_HighlightPayload, List<_HighlightResult>> _tasker;
   late final _IsolateTasker<_PartialHighlightPayload, Map<int, _HighlightResult>> _partialTasker;
   late final _IsolateTasker<_PartialHighlightPayload, Map<int, _HighlightResult>> _initialLoadTasker;
-  late final _IsolateTasker<_HighlightChunkPayload, _HighlightChunkResult> _chunkTasker;
 
   Highlight? _highlight;
   CodeHighlightTheme? _theme;
@@ -352,7 +290,6 @@ class _CodeHighlightEngine {
     _tasker = _IsolateTasker('CodeHighlightEngine', _run);
     _partialTasker = _IsolateTasker('PartialCodeHighlightEngine', _runPartial);
     _initialLoadTasker = _IsolateTasker('InitialCodeHighlightEngine', _runPartial);
-    _chunkTasker = _IsolateTasker('ChunkCodeHighlightEngine', _runChunk);
   }
 
   set theme(CodeHighlightTheme? value) {
@@ -374,7 +311,6 @@ class _CodeHighlightEngine {
     _tasker.close();
     _partialTasker.close();
     _initialLoadTasker.close();
-    _chunkTasker.close();
   }
 
   void run(CodeLines codes, IsolateCallback<List<_HighlightResult>> callback) {
@@ -383,20 +319,6 @@ class _CodeHighlightEngine {
       return;
     }
     _tasker.run(_createPayload(codes), callback);
-  }
-  
-  void runChunk(String text, String language, HighlightState? startState, IsolateCallback<_HighlightChunkResult> callback) {
-    if (_highlight == null) {
-      callback(const _HighlightChunkResult([], null));
-      return;
-    }
-    final payload = _HighlightChunkPayload(
-      highlight: _highlight!,
-      text: text,
-      language: language,
-      startState: startState,
-    );
-    _chunkTasker.run(payload, callback);
   }
 
   void runPartial(CodeLines codes, int dirtyLineIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
@@ -453,18 +375,6 @@ class _CodeHighlightEngine {
     result.render(renderer);
     return renderer.lineResults;
   }
-  
-  @pragma('vm:entry-point')
-  static _HighlightChunkResult _runChunk(_HighlightChunkPayload payload) {
-    final result = payload.highlight.highlight(
-      code: payload.text,
-      language: payload.language,
-      state: payload.startState,
-    );
-    final renderer = _HighlightLineRenderer();
-    result.render(renderer);
-    return _HighlightChunkResult(renderer.lineResults, result.state);
-  }
 
   @pragma('vm:entry-point')
   static Map<int, _HighlightResult> _runPartial(_PartialHighlightPayload payload) {
@@ -497,160 +407,6 @@ class _CodeHighlightEngine {
     
     return updatedResults;
   }
-}
-
-const int _kHighlightChunkSize = 50; // Configurable chunk size
-
-class _ChunkManager {
-  final List<_HighlightChunk> _chunks = [];
-  final CodeLineEditingController _controller;
-  int _documentGeneration;
-
-  _ChunkManager(this._controller, this._documentGeneration) {
-    _rebuild();
-  }
-
-  int get chunkCount => _chunks.length;
-  _HighlightChunk operator [](int index) => _chunks[index];
-
-  /// Finds the chunk index and the starting line number for that chunk
-  /// for a given global line index.
-  (int, int) findChunkForLine(int lineIndex) {
-    // This can be optimized with a binary search if we cache cumulative line counts.
-    // For now, a linear scan is simple and correct.
-    int currentLine = 0;
-    for (int i = 0; i < _chunks.length; i++) {
-      final chunk = _chunks[i];
-      if (lineIndex < currentLine + chunk.results.length) {
-        return (i, currentLine);
-      }
-      currentLine += chunk.results.length;
-    }
-    // Should not happen if lineIndex is valid
-    return (_chunks.length - 1, currentLine - _chunks.last.results.length);
-  }
-
-  /// Rebuilds all chunks from scratch.
-  void _rebuild() {
-    _chunks.clear();
-    for (int i = 0; i < _controller.codeLines.length; i += _kHighlightChunkSize) {
-      final int end = (i + _kHighlightChunkSize > _controller.codeLines.length) ? _controller.codeLines.length : i + _kHighlightChunkSize;
-      final int lineCount = end - i;
-      _chunks.add(_HighlightChunk.empty(lineCount, _documentGeneration));
-    }
-  }
-
-  /// Handles insertions and deletions of lines, returning a set of dirty chunk indices.
-  SplayTreeSet<int> handleEdits(int startLine, int numDeleted, int numAdded, int newGeneration) {
-    _documentGeneration = newGeneration;
-    final dirtyChunks = SplayTreeSet<int>();
-
-    if (_chunks.isEmpty) {
-      _rebuild();
-      if (_chunks.isNotEmpty) {
-        dirtyChunks.add(0);
-      }
-      return dirtyChunks;
-    }
-
-    final (startChunkIndex, chunkStartLine) = findChunkForLine(startLine);
-    final lineInChunk = startLine - chunkStartLine;
-
-    // --- The Core Logic ---
-    // For simplicity and robustness, a common strategy is to invalidate and
-    // partially rebuild the chunks around the edit boundary.
-
-    // 1. Invalidate the starting chunk.
-    dirtyChunks.add(startChunkIndex);
-
-    // 2. Adjust the content of the starting chunk.
-    final startChunk = _chunks[startChunkIndex];
-    final originalEndState = startChunk.endState;
-
-    // Remove deleted lines from the chunk's results cache
-    if (numDeleted > 0) {
-      final int deleteCountInChunk = min(numDeleted, startChunk.results.length - lineInChunk);
-      startChunk.results.removeRange(lineInChunk, lineInChunk + deleteCountInChunk);
-    }
-    // Add placeholders for new lines
-    if (numAdded > 0) {
-      final placeholders = List.generate(numAdded, (_) => _HighlightResult([]));
-      startChunk.results.insertAll(lineInChunk, placeholders);
-    }
-    startChunk.generation = _documentGeneration;
-
-    // 3. Balance the chunks. If a chunk becomes too large, split it.
-    // If it becomes too small, merge it with a neighbor.
-    _balanceChunksFrom(startChunkIndex);
-
-    // 4. Invalidate the next chunk if the start chunk's size changed,
-    // as this implies its end state is now invalid.
-    if (numAdded != numDeleted && startChunkIndex + 1 < _chunks.length) {
-       dirtyChunks.add(startChunkIndex + 1);
-    }
-
-    return dirtyChunks;
-  }
-
-  /// Balances chunk sizes starting from a given index.
-  void _balanceChunksFrom(int index) {
-    for (int i = index; i < _chunks.length; i++) {
-      final chunk = _chunks[i];
-
-      // Split oversized chunks
-      if (chunk.results.length > _kHighlightChunkSize * 2) {
-        final int splitPoint = chunk.results.length ~/ 2;
-        final newChunkLines = chunk.results.sublist(splitPoint);
-        chunk.results.removeRange(splitPoint, chunk.results.length);
-        // Mark both as needing full re-evaluation
-        chunk.endState = null;
-        final newChunk = _HighlightChunk(newChunkLines, null, _documentGeneration);
-        _chunks.insert(i + 1, newChunk);
-      }
-      // Note: Merging undersized chunks can also be implemented here for
-      // documents that see a lot of deletions, but splitting is often sufficient.
-    }
-  }
-}
-
-class _HighlightChunk {
-  // The results for each line within this chunk.
-  List<_HighlightResult> results;
-  // The parser state at the END of this chunk.
-  HighlightState? endState;
-  // A generation marker to know if this chunk's data is from the latest document version.
-  int generation;
-
-  _HighlightChunk(this.results, this.endState, this.generation);
-
-  factory _HighlightChunk.empty(int lineCount, int generation) {
-    return _HighlightChunk(
-      List.generate(lineCount, (_) => _HighlightResult([])),
-      null,
-      generation,
-    );
-  }
-}
-
-class _HighlightChunkPayload {
-  final Highlight highlight;
-  final String text;
-  final String language;
-  final HighlightState? startState;
-
-  const _HighlightChunkPayload({
-    required this.highlight,
-    required this.text,
-    required this.language,
-    this.startState,
-  });
-}
-
-class _HighlightChunkResult {
-  final List<_HighlightResult> lineResults;
-  final HighlightState? endState;
-
-  const _HighlightChunkResult(this.lineResults, this.endState);
 }
 
 class _HighlightPayload {

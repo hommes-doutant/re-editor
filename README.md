@@ -5,9 +5,6 @@ This fork is in a sandbox state. It is for me to try new features and fix some b
 
 Also, the high numbers of commits is because I compile on a different machine, so many commits do not compile.
 
-### Breaking change
-- Bumped minimum dart version to 3.0.0
-
 ### Fork added features
 - **Dirty/clean state tracking** : Add a flag to tell if the history is in a different state that when last marked clean (useful for file editors). And a function to mark an undo node as the "clean" state.
 - **Undo history behaviour improvements** : Changing the selection doesn't clear the redo nodes
@@ -19,8 +16,8 @@ Also, the high numbers of commits is because I compile on a different machine, s
   
 ### Fork regressions
 - **Undo history grouping is mostly broken** : Single keystrokes take a single undo step without being grouped for now.
-- **Highlight does not happen without text change in some edge cases** : Pasting long text usually only partially highlight the text, until a keystroke is made.
-- **Focus issues** : Focus is used for state changes, but it is not set in places it should be set, so some behaviour are inconsistent. Should be fixed soon.
+- **Highlight does not happen without text change in some edge cases** : Pasting long text usually only partially highlight the text, until a keystroke is made due to a performance workaround.
+- **Incorrect Focus** : The behaviour improvements to the focus have also broken some internal mechanism, the correct solution is to uncouple showing the keyboard, and getting focus.
 [![latest version](https://img.shields.io/pub/v/re_editor.svg?color=blue)](https://pub.dev/packages/re_editor)
 
 [中文版本](./README_CN.md)

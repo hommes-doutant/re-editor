@@ -5,15 +5,14 @@ publish_to: none
 version: 1.0.0
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=2.17.0 <3.0.0"
   flutter: ">=1.17.0"
 
 dependencies:
   flutter:
     sdk: flutter
   collection: ^1.17.1
-  re_highlight:
-    path: ../../re-highlight
+  re_highlight: ^0.0.2
   re_editor:
     path: ../
 
