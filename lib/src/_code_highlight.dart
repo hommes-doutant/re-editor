@@ -1,5 +1,3 @@
-// FILE: lib/src/_code_highlight.dart
-
 part of re_editor;
 
 class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
@@ -12,7 +10,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
 
   int _highlightGeneration = 0;
   List<_HighlightResult> _highlightCache = [];
-  
+
   _CodeHighlighter({
     required BuildContext context,
     required CodeLineEditingController controller,
@@ -182,7 +180,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       return;
     }
     
-    const int kPartialHighlightThreshold = 200;
+    const int kPartialHighlightThreshold = 100;
 
     int firstDiff = 0;
     while (firstDiff < oldCodeLines.length &&
@@ -203,13 +201,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
 
-    // If the number of added lines or the total span of changed lines is too large,
-    // fall back to a full re-highlight for simplicity and to avoid sending huge text blocks to the isolate.
-    if (max(numAdded, lastDiffNew - firstDiff + 1) > kPartialHighlightThreshold) {
-      _processFullHighlight();
-      return;
-    }
-    if (numAdded == 0 && numDeleted == 0 && firstDiff > lastDiffNew) {
+    if (numAdded > kPartialHighlightThreshold) {
       _processFullHighlight();
       return;
     }
@@ -221,7 +213,7 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
       value = List.of(_highlightCache);
     }
     
-    _processPartialHighlight(firstDiff, lastDiffNew);
+    _processPartialHighlight(firstDiff);
   }
 
   void _processFullHighlight() {
@@ -270,14 +262,10 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     );
   }
 
-  void _processPartialHighlight(int dirtyStartIndex, int dirtyEndIndex) {
-    if (dirtyEndIndex < dirtyStartIndex) {
-      return;
-    }
+  void _processPartialHighlight(int dirtyLineIndex) {
     _engine.runPartial(
       _controller.codeLines, 
-      dirtyStartIndex,
-      dirtyEndIndex,
+      dirtyLineIndex, 
       (partialResult) {
         partialResult.forEach((index, result) {
           if (index < _highlightCache.length) {
@@ -333,12 +321,12 @@ class _CodeHighlightEngine {
     _tasker.run(_createPayload(codes), callback);
   }
 
-  void runPartial(CodeLines codes, int dirtyStartIndex, int dirtyEndIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
+  void runPartial(CodeLines codes, int dirtyLineIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
     if (_highlight == null) {
       callback({});
       return;
     }
-    _partialTasker.run(_createPartialPayload(codes, dirtyStartIndex, dirtyEndIndex), callback);
+    _partialTasker.run(_createPartialPayload(codes, dirtyLineIndex), callback);
   }
 
   void runInitialLoadChunk(CodeLines codes, int dirtyLineIndex, IsolateCallback<Map<int, _HighlightResult>> callback) {
@@ -346,7 +334,7 @@ class _CodeHighlightEngine {
       callback({});
       return;
     }
-    _initialLoadTasker.run(_createPartialPayload(codes, dirtyLineIndex, dirtyLineIndex), callback);
+    _initialLoadTasker.run(_createPartialPayload(codes, dirtyLineIndex), callback);
   }
 
   _HighlightPayload _createPayload(CodeLines codes) {
@@ -360,15 +348,14 @@ class _CodeHighlightEngine {
     );
   }
 
-  _PartialHighlightPayload _createPartialPayload(CodeLines codes, int dirtyStartIndex, int dirtyEndIndex) {
+  _PartialHighlightPayload _createPartialPayload(CodeLines codes, int dirtyLineIndex) {
     final String language = _theme?.languages.keys.isNotEmpty == true 
       ? _theme!.languages.keys.first 
       : 'plaintext';
     return _PartialHighlightPayload(
       highlight: _highlight!,
       codes: codes,
-      dirtyStartIndex: dirtyStartIndex,
-      dirtyEndIndex: dirtyEndIndex,
+      dirtyLineIndex: dirtyLineIndex,
       language: language,
     );
   }
@@ -392,8 +379,8 @@ class _CodeHighlightEngine {
   @pragma('vm:entry-point')
   static Map<int, _HighlightResult> _runPartial(_PartialHighlightPayload payload) {
     const int contextSize = 50;
-    final int startLine = max(0, payload.dirtyStartIndex - contextSize);
-    final int endLine = min(payload.codes.length, payload.dirtyEndIndex + 1 + contextSize);
+    final int startLine = max(0, payload.dirtyLineIndex - contextSize);
+    final int endLine = min(payload.codes.length, payload.dirtyLineIndex + contextSize + 1);
     
     if (startLine >= endLine) {
       return {};
@@ -438,15 +425,12 @@ class _HighlightPayload {
 class _PartialHighlightPayload {
   final Highlight highlight;
   final CodeLines codes;
-  final int dirtyStartIndex;
-  final int dirtyEndIndex;
+  final int dirtyLineIndex;
   final String language;
 
   const _PartialHighlightPayload({
     required this.highlight, required this.codes, 
-    required this.dirtyStartIndex,
-    required this.dirtyEndIndex,
-    required this.language,
+    required this.dirtyLineIndex, required this.language,
   });
 }
 
