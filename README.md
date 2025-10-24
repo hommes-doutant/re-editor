@@ -16,7 +16,7 @@ Also, the high numbers of commits is because I compile on a different machine, s
   
 ### Fork regressions
 - **Undo history grouping is mostly broken** : Single keystrokes take a single undo step without being grouped for now.
-- **Highlight does not happen without text change in some edge cases** : Pasting long text usually only partially highlight the text, until a keystroke is made due to a performance workaround.
+- **Highlight can be incorrect in some edge cases** : Long multi-line context can be partially fail to highlight if it is bigger than the highlight context window (a cheat used for fast partial highlight)
 - **Incorrect Focus** : The behaviour improvements to the focus have also broken some internal mechanism, the correct solution is to uncouple showing the keyboard, and getting focus.
 [![latest version](https://img.shields.io/pub/v/re_editor.svg?color=blue)](https://pub.dev/packages/re_editor)
 

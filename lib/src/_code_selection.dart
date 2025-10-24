@@ -55,6 +55,7 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
         },
         onLongPressStart: (details) {
           _dragPosition = details.globalPosition;
+          widget.inputController.requestFocus();
           // widget.inputController.ensureInput();
           _longPressOnSelection = _isPositionOnSelection(details.globalPosition);
           if (_longPressOnSelection != true) {
@@ -191,6 +192,7 @@ class _CodeSelectionGestureDetectorState extends State<_CodeSelectionGestureDete
       widget.selectionOverlayController.hideHandle();
       widget.selectionOverlayController.hideToolbar();
     }
+    widget.inputController.requestFocus();
     if (_wasSelectionCollapsedOnTapDown) {
       widget.inputController.ensureInput();
     }

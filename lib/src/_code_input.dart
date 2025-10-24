@@ -392,11 +392,16 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   void insertContent(KeyboardInsertedContent content) {}
 
   void ensureInput() {
-    if (_focusNode.hasFocus) {
-      if (!_readOnly) {
-        _openInputConnection();
-      }
-    } else {
+    if (!_focusNode.hasFocus) {
+      _focusNode.requestFocus();
+    }
+    if (!_readOnly) {
+      _openInputConnection();
+    }
+  }
+  
+  void requestFocus() {
+    if (!_focusNode.hasFocus) {
       _focusNode.requestFocus();
     }
   }
@@ -476,7 +481,10 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   }
 
   void _onFocusChanged() {
-    _openOrCloseInputConnectionIfNeeded();
+    if (!_focusNode.hasFocus) {
+      _closeInputConnectionIfNeeded();
+      _controller.clearComposing();
+    }
   }
 
   void _openOrCloseInputConnectionIfNeeded() {
