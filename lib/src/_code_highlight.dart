@@ -179,50 +179,50 @@ class _CodeHighlighter extends ValueNotifier<List<_HighlightResult>> {
     if (preValue == null || _controller.codeLines == preValue.codeLines) {
       return;
     }
-
+  
     _documentGeneration++;
     final int generation = _documentGeneration;
-    _highlightGeneration++; 
-
-    // Find difference range (same as before)
+    _highlightGeneration++;
+  
+    // --- Diffing logic remains the same ---
     int firstDiff = 0;
     while (firstDiff < preValue.codeLines.length &&
-           firstDiff < _controller.codeLines.length &&
-           preValue.codeLines[firstDiff] == _controller.codeLines[firstDiff]) {
+        firstDiff < _controller.codeLines.length &&
+        preValue.codeLines[firstDiff] == _controller.codeLines[firstDiff]) {
       firstDiff++;
     }
-
+  
     int lastDiffOld = preValue.codeLines.length - 1;
     int lastDiffNew = _controller.codeLines.length - 1;
     while (lastDiffOld >= firstDiff &&
-           lastDiffNew >= firstDiff &&
-           preValue.codeLines[lastDiffOld] == _controller.codeLines[lastDiffNew]) {
+        lastDiffNew >= firstDiff &&
+        preValue.codeLines[lastDiffOld] == _controller.codeLines[lastDiffNew]) {
       lastDiffOld--;
       lastDiffNew--;
     }
-
+  
     final int numDeleted = max(0, lastDiffOld - firstDiff + 1);
     final int numAdded = max(0, lastDiffNew - firstDiff + 1);
-
-    // Use the ChunkManager to handle the structural changes
-    final newDirtyChunks = _chunkManager.handleEdits(firstDiff, numDeleted, numAdded, generation);
-    _dirtyChunkIndices.addAll(newDirtyChunks);
-    
-    // Trigger the processing loop
+  
+    // --- Corrected Logic ---
+    // If the number of lines has changed, it's simpler and more robust to
+    // create a new ChunkManager, which rebuilds the chunk structure from scratch.
+    if (_controller.lineCount != preValue.codeLines.lineCount) {
+      _chunkManager = _ChunkManager(_controller, generation);
+      // After a full rebuild, all chunks are new and need to be highlighted.
+      _dirtyChunkIndices.addAll(List.generate(_chunkManager.chunkCount, (i) => i));
+    } else {
+      // If only content changed (no lines added/removed), use the more efficient
+      // handleEdits method to surgically update the chunk structure.
+      final newDirtyChunks = _chunkManager.handleEdits(firstDiff, numDeleted, numAdded, generation);
+      _dirtyChunkIndices.addAll(newDirtyChunks);
+    }
+  
+    // Trigger the processing loop for all newly dirtied chunks.
     _processDirtyChunks(generation);
   }
   
-  void _rebuildChunks(int generation) {
-    final newChunks = <_HighlightChunk>[];
-    for (int i = 0; i < _controller.codeLines.length; i += _kHighlightChunkSize) {
-      final int end = (i + _kHighlightChunkSize > _controller.codeLines.length) ? _controller.codeLines.length : i + _kHighlightChunkSize;
-      final int lineCount = end - i;
-      newChunks.add(_HighlightChunk.empty(lineCount, generation));
-    }
-    _chunkCache = newChunks;
-    // Mark all chunks as dirty since the structure changed
-    _dirtyChunkIndices.addAll(List.generate(newChunks.length, (i) => i));
-  }
+
   
 void _processDirtyChunks(int generation) async {
   // 1. Singleton Guard: Ensure only one processing loop runs at a time.
