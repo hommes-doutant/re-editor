@@ -106,7 +106,7 @@ class _CodeEditableState extends State<_CodeEditable> with AutomaticKeepAliveCli
   late CodeIndicatorValueNotifier _codeIndicatorValueNotifier;
 
   @override
-  bool get wantKeepAlive => true; // <<< NEW LINE
+  bool get wantKeepAlive => widget.focusNode.hasFocus;
 
   @override
   void initState() {
