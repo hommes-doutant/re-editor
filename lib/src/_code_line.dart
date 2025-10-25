@@ -1638,12 +1638,18 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
   void _applyIndent([bool fromLineStart = false]) {
     final CodeLines newCodeLines = CodeLines.from(codeLines);
     if (selection.isSameLine) {
-      if (!fromLineStart && (selection.isCollapsed || selection.startOffset != 0 || selection.endOffset != endLine.length)) {
+      if (selection.isCollapsed || selection.startOffset != 0 || selection.endOffset != endLine.length) {
         final String textBefore = _codeTextBefore(selection.start);
         final int indentLength = indent.length - textBefore.length % indent.length;
-        newCodeLines[selection.extentIndex] = extentLine.copyWith(
-          text: textBefore + ' ' * indentLength + _codeTextAfter(selection.end)
-        );
+        if (!fromLineStart){
+          newCodeLines[selection.extentIndex] = extentLine.copyWith(
+            text: textBefore + ' ' * indentLength + _codeTextAfter(selection.end)
+          );
+        } else {
+          newCodeLines[selection.extentIndex] = extentLine.copyWith(
+            text: ' ' * indentLength + textBefore + _codeTextAfter(selection.end)
+          );
+        }
         value = value.copyWith(
           codeLines: newCodeLines,
           selection: CodeLineSelection.collapsed(
