@@ -971,8 +971,10 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
   }
 
   @override
-  void applyIndent() {
-    runRevocableOp(_applyIndent);
+  void applyIndent([bool fromLineStart = false]){
+    runRevocableOp(() {
+      _applyIndent(fromLineStart);
+    });
   }
 
   @override
@@ -1633,10 +1635,10 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
     makeCursorCenterIfInvisible();
   }
 
-  void _applyIndent() {
+  void _applyIndent([bool fromLineStart = false]) {
     final CodeLines newCodeLines = CodeLines.from(codeLines);
     if (selection.isSameLine) {
-      if (selection.isCollapsed || selection.startOffset != 0 || selection.endOffset != endLine.length) {
+      if (!fromLineStart && (selection.isCollapsed || selection.startOffset != 0 || selection.endOffset != endLine.length)) {
         final String textBefore = _codeTextBefore(selection.start);
         final int indentLength = indent.length - textBefore.length % indent.length;
         newCodeLines[selection.extentIndex] = extentLine.copyWith(

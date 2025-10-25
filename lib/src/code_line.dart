@@ -294,7 +294,7 @@ abstract class CodeLineEditingController extends ValueNotifier<CodeLineEditingVa
   void applyNewLine();
 
   /// Insert a indent.
-  void applyIndent();
+  void applyIndent([bool fromLineStart = false]);
 
   /// Delete a indent.
   void applyOutdent();
