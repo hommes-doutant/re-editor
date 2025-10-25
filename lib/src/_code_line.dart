@@ -2302,8 +2302,8 @@ class _CodeLineEditingControllerDelegate implements CodeLineEditingController {
   }
 
   @override
-  void applyIndent() {
-    _delegate.applyIndent();
+  void applyIndent([bool fromLineStart = false]){
+    _delegate.applyIndent(fromLineStart);
   }
 
   @override
