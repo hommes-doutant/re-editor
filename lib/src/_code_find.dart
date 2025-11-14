@@ -293,7 +293,8 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
       return;
     }
     final CodeLines preCodeLine = _controller.codeLines;
-    _controller.replaceSelection(_replaceInputController.text, selection);
+    final RegExp? regExp = value?.result?.option.regExp;
+    _controller.replaceSelection(_replaceInputController.text, selection, regExp);
     final CodeFindValue newValue = value!.copyWith(
       result: result.next.copyWith(
         dirty: !preCodeLine.equals(_controller.codeLines)

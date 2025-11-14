@@ -302,9 +302,9 @@ abstract class CodeLineEditingController extends ValueNotifier<CodeLineEditingVa
   /// Transpose characters.
   void transposeCharacters();
 
-  /// Replace the selected code with a new string [replacement].
-  void replaceSelection(String replacement, [CodeLineSelection? selection]);
-
+  /// Replace the selected code with a new string [replacement]. Uses match-group replacement if regexp is provided.
+  void replaceSelection(String replacement, [CodeLineSelection? selection, RegExp? regExpPattern]);
+  
   /// Replaces all substrings that match [pattern] with [replacement].
   void replaceAll(Pattern pattern, String replacement);
 

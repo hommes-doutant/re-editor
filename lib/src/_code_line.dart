@@ -988,9 +988,9 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
   }
 
   @override
-  void replaceSelection(String replacement, [CodeLineSelection? range]) {
+  void replaceSelection(String replacement, [CodeLineSelection? range, RegExp? regExpPattern]) {
     runRevocableOp(() {
-      _replaceRange(replacement, range);
+      _replaceRange(replacement, range, regExpPattern);
     });
   }
 
@@ -1845,50 +1845,82 @@ class _CodeLineEditingControllerImpl extends ValueNotifier<CodeLineEditingValue>
     }
   }
 
-  void _replaceRange(String replacement, [CodeLineSelection? range]) {
-    range ??= selection;
-    if (replacement.isEmpty && range.isCollapsed) {
-      return;
-    }
-    final List<String> replaceCodeLines = replacement.textLines;
-    final CodeLines newCodeLines = codeLines.sublines(0, range.startIndex);
-    int index = 0;
-    int offset = 0;
-    if (replaceCodeLines.length == 1) {
-      newCodeLines.add(codeLines[range.endIndex].copyWith(
-        text: _codeTextBefore(range.start) + replaceCodeLines.first + _codeTextAfter(range.end)
-      ));
-      index = range.startIndex;
-      offset = range.startOffset + replaceCodeLines.first.length;
+void _replaceRange(String replacement, [CodeLineSelection? range, RegExp? regExpPattern]) {
+  range ??= selection;
+  String finalReplacement = replacement;
+
+  if (regExpPattern != null && !range.isCollapsed) {
+    // Manually get the text for the given range, as the `selectedText` getter
+    // is tied to the controller's current selection state.
+    final String textToReplace;
+    final StringBuffer sb = StringBuffer();
+    if (range.isSameLine) {
+      sb.write(codeLines[range.startIndex].substring(range.startOffset, range.endOffset));
     } else {
-      for (int i = 0; i < replaceCodeLines.length; i++) {
-        final String replaceCodeLine = replaceCodeLines[i];
-        if (i == 0) {
-          newCodeLines.add(CodeLine(_codeTextBefore(range.start) + replaceCodeLine));
-        } else if (i == replaceCodeLines.length - 1) {
-          newCodeLines.add(codeLines[range.endIndex].copyWith(
-            text: replaceCodeLine + _codeTextAfter(range.end)
-          ));
-          index = newCodeLines.length - 1;
-          offset = replaceCodeLine.length;
+      for (int i = range.startIndex; i <= range.endIndex; i++) {
+        final CodeLine codeLine = codeLines[i];
+        if (i == range.startIndex) {
+          sb.write(codeLine.substring(range.startOffset));
+        } else if (i == range.endIndex) {
+          sb.write(codeLine.substring(0, range.endOffset));
         } else {
-          newCodeLines.add(CodeLine(replaceCodeLine));
+          sb.write(codeLine.text);
+        }
+        if (i < range.endIndex) {
+          sb.write(lineBreak.value);
         }
       }
     }
-    if (range.endIndex + 1 < codeLines.length) {
-      newCodeLines.addFrom(codeLines, range.endIndex + 1);
+    textToReplace = sb.toString();
+
+    final Match? match = regExpPattern.firstMatch(textToReplace);
+    if (match != null) {
+      finalReplacement = _processReplacement(replacement, match);
     }
-    value = CodeLineEditingValue(
-      codeLines: newCodeLines,
-      selection: CodeLineSelection.collapsed(
-        index: index,
-        offset: offset,
-        affinity: range.extentAffinity
-      )
-    );
-    makeCursorCenterIfInvisible();
   }
+
+  if (finalReplacement.isEmpty && range.isCollapsed) {
+    return;
+  }
+  final List<String> replaceCodeLines = finalReplacement.textLines;
+  final CodeLines newCodeLines = codeLines.sublines(0, range.startIndex);
+  int index = 0;
+  int offset = 0;
+  if (replaceCodeLines.length == 1) {
+    newCodeLines.add(codeLines[range.endIndex].copyWith(
+      text: _codeTextBefore(range.start) + replaceCodeLines.first + _codeTextAfter(range.end)
+    ));
+    index = range.startIndex;
+    offset = range.startOffset + replaceCodeLines.first.length;
+  } else {
+    for (int i = 0; i < replaceCodeLines.length; i++) {
+      final String replaceCodeLine = replaceCodeLines[i];
+      if (i == 0) {
+        newCodeLines.add(CodeLine(_codeTextBefore(range.start) + replaceCodeLine));
+      } else if (i == replaceCodeLines.length - 1) {
+        newCodeLines.add(codeLines[range.endIndex].copyWith(
+          text: replaceCodeLine + _codeTextAfter(range.end)
+        ));
+        index = newCodeLines.length - 1;
+        offset = replaceCodeLine.length;
+      } else {
+        newCodeLines.add(CodeLine(replaceCodeLine));
+      }
+    }
+  }
+  if (range.endIndex + 1 < codeLines.length) {
+    newCodeLines.addFrom(codeLines, range.endIndex + 1);
+  }
+  value = CodeLineEditingValue(
+    codeLines: newCodeLines,
+    selection: CodeLineSelection.collapsed(
+      index: index,
+      offset: offset,
+      affinity: range.extentAffinity
+    )
+  );
+  makeCursorCenterIfInvisible();
+}
   
   String _processReplacement(String replacement, Match match) {
     return replacement.replaceAllMapped(RegExp(r'\$(\d+)'), (m) {
@@ -2617,8 +2649,8 @@ class _CodeLineEditingControllerDelegate implements CodeLineEditingController {
   }
 
   @override
-  void replaceSelection(String replacement, [CodeLineSelection? selection]) {
-    _delegate.replaceSelection(replacement, selection);
+  void replaceSelection(String replacement, [CodeLineSelection? selection, RegExp? regExpPattern]) {
+    _delegate.replaceSelection(replacement, selection, regExpPattern);
   }
 
   @override
