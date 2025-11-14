@@ -9,6 +9,7 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
   late final TextEditingController _replaceInputController;
   late final FocusNode _replaceInputFocusNode;
   late bool _shouldNotUpdateResults;
+  int _nextIndexAfterSearch = -1;
 
   _CodeFindControllerImpl(CodeLineEditingController controller, [CodeFindValue? value]) : super(value) {
     _controller = controller is _CodeLineEditingControllerDelegate ? controller.delegate : controller;
@@ -282,7 +283,7 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
   @override
   void replaceMatch() {
     final CodeFindResult? result = value?.result;
-    if (result == null || result.dirty) {
+    if (result == null || result.dirty || result.matches.isEmpty) {
       return;
     }
     if (currentMatchSelection == null) {
@@ -292,16 +293,22 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
     if (selection == null) {
       return;
     }
-    final CodeLines preCodeLine = _controller.codeLines;
+  
+    _nextIndexAfterSearch = result.index;
+  
     final RegExp? regExp = value?.result?.option.regExp;
     _controller.replaceSelection(_replaceInputController.text, selection, regExp);
-    final CodeFindValue newValue = value!.copyWith(
-      result: result.next.copyWith(
-        dirty: !preCodeLine.equals(_controller.codeLines)
-      )
-    );
-    _expandChunkIfNeeded(newValue);
-    value = newValue;
+    
+    // This is for direct update of the UI but the reactivity means that it's never used
+    // Kept for documentation.
+    
+    // final CodeFindValue newValue = value!.copyWith(
+    //   result: result.next.copyWith(
+    //     dirty: !preCodeLine.equals(_controller.codeLines)
+    //   )
+    // );
+    // _expandChunkIfNeeded(newValue);
+    // value = newValue;
   }
 
   @override
@@ -398,11 +405,22 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
     }
     _tasker.run(_CodeFindPayload(_controller.codeLines, _controller.unforldLineSelection, option), (result) {
       if (option == value?.option) {
+        CodeFindResult? finalResult = result;
+        if (finalResult != null && _nextIndexAfterSearch != -1) {
+          int newIndex = _nextIndexAfterSearch;
+          if (newIndex >= finalResult.matches.length) {
+            newIndex = finalResult.matches.isNotEmpty ? finalResult.matches.length - 1 : -1;
+          }
+          finalResult = finalResult.copyWith(index: newIndex);
+          _nextIndexAfterSearch = -1;
+        }
+  
         final CodeFindValue newValue = value!.copyWith(
-          result: result,
+          result: finalResult,
           searching: false
         );
-        if (optionChanged) {
+  
+        if (optionChanged || finalResult != result) { // Also expand if the index was programmatically changed
           _expandChunkIfNeeded(newValue);
         }
         value = newValue;
