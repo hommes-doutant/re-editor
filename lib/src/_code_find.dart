@@ -83,7 +83,9 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
   @override
   void findMode() {
     _findInputFocusNode.requestFocus();
-    final String? autoFilled = _autoFilledPattern();
+    final bool isRegexOn = value?.option.regex ?? false;
+    final String? autoFilled = !isRegexOn ? _autoFilledPattern() : null;
+
     _findInputController.removeListener(_onFindPatternChanged);
     if (autoFilled != null) {
       _findInputController.value = TextEditingValue(
@@ -114,7 +116,8 @@ class _CodeFindControllerImpl extends ValueNotifier<CodeFindValue?> implements C
   @override
   void replaceMode() {
     _replaceInputFocusNode.requestFocus();
-    final String? autoFilled = _autoFilledPattern();
+    final bool isRegexOn = value?.option.regex ?? false;
+    final String? autoFilled = !isRegexOn ? _autoFilledPattern() : null;
     _findInputController.removeListener(_onFindPatternChanged);
     if (autoFilled != null) {
       _findInputController.value = TextEditingValue(
