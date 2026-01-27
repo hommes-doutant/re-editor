@@ -207,13 +207,11 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
     if (_updateCausedByFloatingCursor) {
-      // This is necessary because otherwise the content of the line where the floating cursor was started
-      // will be pasted over to the line where the floating cursor was stopped.
       _updateCausedByFloatingCursor = false;
       return;
     }
 
-    // Special, optimized handling for newlines, as this is a very common operation.
+    // Special, optimized handling for newlines
     if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
       TextEditingValue newValue = _remoteEditingValue!;
       for (final TextEditingDelta delta in textEditingDeltas) {
@@ -224,23 +222,39 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
-    // --- FIX START: Handle selection replacement ---
-    // If text is selected and the user types (Insertion Delta), we must treat it
-    // as a replacement. The default IME logic often fails to sync the deletion
-    // of the selection range correctly in this custom editor implementation.
-    if (!_controller.selection.isCollapsed &&
-        textEditingDeltas.every((e) => e is TextEditingDeltaInsertion)) {
-      final StringBuffer sb = StringBuffer();
-      for (final TextEditingDelta delta in textEditingDeltas) {
-        if (delta is TextEditingDeltaInsertion) {
-          sb.write(delta.textInserted);
+    // --- FIX START ---
+    // If text is selected and the user types, standard IME behavior often sends an 'Insertion'
+    // at the base index instead of a 'Replacement'. This causes the new text to be prepended.
+    // We intercept this specific case here.
+    if (!selection.isCollapsed && textEditingDeltas.isNotEmpty) {
+      final TextEditingDelta firstDelta = textEditingDeltas.first;
+      
+      // We only intervene if it's an insertion. If it's already a replacement, standard logic works.
+      if (firstDelta is TextEditingDeltaInsertion && firstDelta.textInserted.isNotEmpty) {
+        final String textToInsert = firstDelta.textInserted;
+
+        // Handle Bracket/Quote Wrapping Logic (manually check since we are bypassing SmartDelta loop)
+        if (_autocompleteSymbols) {
+          _ClosureSymbol? wrapSymbol;
+          for (final symbol in _SmartTextEditingDelta._wrapSymbols) {
+            if (symbol.left == textToInsert) {
+              wrapSymbol = symbol;
+              break;
+            }
+          }
+
+          if (wrapSymbol != null) {
+            // Perform wrapping: {selection}
+            final String selectedText = _controller.selectedText;
+            _controller.replaceSelection('${wrapSymbol.left}$selectedText${wrapSymbol.right}');
+            // Return early. The controller update will trigger a sync back to IME via _onCodeEditingChanged.
+            return; 
+          }
         }
-      }
-      // If we have content to insert, force a replaceSelection on the controller.
-      // This handles deleting the old range and inserting the new text atomically.
-      if (sb.isNotEmpty) {
-        _controller.replaceSelection(sb.toString());
-        return;
+
+        // Handle Standard Replacement (replace selection with new char)
+        _controller.replaceSelection(textToInsert);
+        return; 
       }
     }
     // --- FIX END ---
@@ -277,7 +291,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     } else {
       _applyMultiLineInputValue(newValue);
     }
-    // Listeners are notified by the controller when its value changes in _applyMultiLineInputValue.
     // _Trace.end('updateEditingValue all');
   }
 
