@@ -224,6 +224,27 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
+    // --- FIX START: Handle selection replacement ---
+    // If text is selected and the user types (Insertion Delta), we must treat it
+    // as a replacement. The default IME logic often fails to sync the deletion
+    // of the selection range correctly in this custom editor implementation.
+    if (!_controller.selection.isCollapsed &&
+        textEditingDeltas.every((e) => e is TextEditingDeltaInsertion)) {
+      final StringBuffer sb = StringBuffer();
+      for (final TextEditingDelta delta in textEditingDeltas) {
+        if (delta is TextEditingDeltaInsertion) {
+          sb.write(delta.textInserted);
+        }
+      }
+      // If we have content to insert, force a replaceSelection on the controller.
+      // This handles deleting the old range and inserting the new text atomically.
+      if (sb.isNotEmpty) {
+        _controller.replaceSelection(sb.toString());
+        return;
+      }
+    }
+    // --- FIX END ---
+
     // _Trace.begin('updateEditingValue all');
     TextEditingValue newValue = _remoteEditingValue!;
     bool smartChange = false;
