@@ -257,15 +257,14 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
 
       // 2. Handle Deletion (User pressed Backspace over a selection)
       bool isDeletion = firstDelta is TextEditingDeltaDeletion;
-      bool isEmptyReplacement = firstDelta is TextEditingDeltaReplacement && firstDelta.textInserted.isEmpty;
+      bool isEmptyReplacement = firstDelta is TextEditingDeltaReplacement && firstDelta.replacementText.isEmpty;
       
       if (isDeletion || isEmptyReplacement) {
         // We force deleteSelection() here because the delta range sent by the IME
         // might be tiny (e.g. deleting 1 char) if the IME thought the selection was collapsed.
         _controller.deleteSelection();
         return;
-      }
-    }
+      }    }
     // --- FIX END ---
 
     // _Trace.begin('updateEditingValue all');
