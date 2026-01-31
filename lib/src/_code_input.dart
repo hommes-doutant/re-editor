@@ -167,7 +167,7 @@ void _applyMultiLineInputValue(TextEditingValue value) {
     // Replace the old context lines with the new ones.
     // Only run revocable op if the change is more than a single character
     // to avoid unnecessary state changes for simple typing.
-    if (value.text.length > 1 || codeLines.text.length > 1) {
+    if (value.length > 1 || codeLines.text.length > 1) {
       _controller.runRevocableOp(() {
         final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
         modifiedCodeLines.addAll(newCodeLines);
