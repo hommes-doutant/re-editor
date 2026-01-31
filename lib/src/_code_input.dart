@@ -150,7 +150,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     return _LineCol(line, col);
   }
 
-void _applyMultiLineInputValue(TextEditingValue value) {
+  void _applyMultiLineInputValue(TextEditingValue value) {
     if (_contextLineIndex == -1) return;
 
     const int kImeContextLines = 1;
@@ -165,54 +165,14 @@ void _applyMultiLineInputValue(TextEditingValue value) {
     );
 
     // Replace the old context lines with the new ones.
-    // Only run revocable op if the change is more than a single character
-    // to avoid unnecessary state changes for simple typing.
-    if (value.text.length > 1 || codeLines.length > 1) {
-      _controller.runRevocableOp(() {
-        final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
-        modifiedCodeLines.addAll(newCodeLines);
-        if (oldContextEndLine < codeLines.length) {
-          modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
-        }
-
-        // Convert the selection from the IME (relative to contextText) back to our model's format.
-        final _LineCol basePosition = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
-        final _LineCol extentPosition = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
-
-        final CodeLineSelection newSelection = CodeLineSelection(
-          baseIndex: contextStartLine + basePosition.line,
-          baseOffset: basePosition.col,
-          extentIndex: contextStartLine + extentPosition.line,
-          extentOffset: extentPosition.col,
-          baseAffinity: value.selection.affinity,
-          extentAffinity: value.selection.affinity,
-        );
-
-        // This assumes composing happens on a single line.
-        final _LineCol composingStartPosition = _convertOffsetToLineCol(value.text, value.composing.start);
-        final _LineCol composingEndPosition = _convertOffsetToLineCol(value.text, value.composing.end);
-
-        final TextRange newComposing = value.composing.isValid
-            ? TextRange(start: composingStartPosition.col, end: composingEndPosition.col)
-            : TextRange.empty;
-
-        // Directly update the controller's value. We bypass `controller.edit()`
-        // because it's designed for single-line edits.
-        _controller.value = _controller.value.copyWith(
-          codeLines: modifiedCodeLines,
-          selection: newSelection,
-          composing: newComposing,
-        );
-        _controller.makeCursorVisible();
-      });
-    } else {
-      // For single character changes, directly update without revocable operation
+    _controller.runRevocableOp(() {
       final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
       modifiedCodeLines.addAll(newCodeLines);
       if (oldContextEndLine < codeLines.length) {
         modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
       }
 
+      // Convert the selection from the IME (relative to contextText) back to our model's format.
       final _LineCol basePosition = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
       final _LineCol extentPosition = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
 
@@ -225,6 +185,7 @@ void _applyMultiLineInputValue(TextEditingValue value) {
         extentAffinity: value.selection.affinity,
       );
 
+      // This assumes composing happens on a single line.
       final _LineCol composingStartPosition = _convertOffsetToLineCol(value.text, value.composing.start);
       final _LineCol composingEndPosition = _convertOffsetToLineCol(value.text, value.composing.end);
 
@@ -232,13 +193,15 @@ void _applyMultiLineInputValue(TextEditingValue value) {
           ? TextRange(start: composingStartPosition.col, end: composingEndPosition.col)
           : TextRange.empty;
 
+      // Directly update the controller's value. We bypass `controller.edit()`
+      // because it's designed for single-line edits.
       _controller.value = _controller.value.copyWith(
         codeLines: modifiedCodeLines,
         selection: newSelection,
         composing: newComposing,
       );
       _controller.makeCursorVisible();
-    }
+    });
   }
 
   @override
