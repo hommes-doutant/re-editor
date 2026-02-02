@@ -217,11 +217,10 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
 
       if (remoteSelection != null &&
           singleDelta is TextEditingDeltaReplacement &&
-          remoteSelection.isCollapsed && // Bug occurs with a collapsed cursor.
-          singleDelta.replacementText.length == 1 && // A single character was typed.
-          singleDelta.replacedRange.end == remoteSelection.start && // The replacement ends AT the cursor.
-          singleDelta.replacedRange.length == 1) { // It's replacing exactly one character.
-
+          remoteSelection.isCollapsed &&
+          singleDelta.replacementText.length == 1 &&
+          singleDelta.replacedRange.end == remoteSelection.start &&
+         (singleDelta.replacedRange.end - singleDelta.replacedRange.start) == 1) {
         _controller.replaceSelection(singleDelta.replacementText);
 
         return;
