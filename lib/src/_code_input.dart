@@ -164,7 +164,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       _contextLineIndex + kImeContextLines + 1,
     );
 
-    // Replace the old context lines with the new ones.
     _controller.runRevocableOp(() {
       final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
       modifiedCodeLines.addAll(newCodeLines);
@@ -172,7 +171,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
         modifiedCodeLines.addFrom(codeLines, oldContextEndLine);
       }
 
-      // Convert the selection from the IME (relative to contextText) back to our model's format.
       final _LineCol basePosition = _convertOffsetToLineCol(value.text, value.selection.baseOffset);
       final _LineCol extentPosition = _convertOffsetToLineCol(value.text, value.selection.extentOffset);
 
@@ -185,7 +183,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
         extentAffinity: value.selection.affinity,
       );
 
-      // This assumes composing happens on a single line.
       final _LineCol composingStartPosition = _convertOffsetToLineCol(value.text, value.composing.start);
       final _LineCol composingEndPosition = _convertOffsetToLineCol(value.text, value.composing.end);
 
@@ -193,8 +190,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
           ? TextRange(start: composingStartPosition.col, end: composingEndPosition.col)
           : TextRange.empty;
 
-      // Directly update the controller's value. We bypass `controller.edit()`
-      // because it's designed for single-line edits.
       _controller.value = _controller.value.copyWith(
         codeLines: modifiedCodeLines,
         selection: newSelection,
@@ -211,7 +206,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
-    // Special, optimized handling for newlines
     if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
       TextEditingValue newValue = _remoteEditingValue!;
       for (final TextEditingDelta delta in textEditingDeltas) {
@@ -222,19 +216,12 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
-    // --- FIX START ---
-    // Handle interactions when text is selected. The IME often sends deltas (insertions/deletions)
-    // based on what it thinks is the context. For multi-line selections, we intentionally lie to 
-    // the IME (reporting collapsed selection) to prevent issues, so we must manually handle 
-    // the resulting deltas as "Replace" or "Delete" operations on the actual selection.
     if (!_controller.selection.isCollapsed && textEditingDeltas.isNotEmpty) {
       final TextEditingDelta firstDelta = textEditingDeltas.first;
 
-      // 1. Handle Insertion (User typed a character over a selection)
       if (firstDelta is TextEditingDeltaInsertion && firstDelta.textInserted.isNotEmpty) {
         final String textToInsert = firstDelta.textInserted;
 
-        // Bracket/Quote Wrapping: check if we should wrap the selection instead of replacing it
         if (_autocompleteSymbols) {
           _ClosureSymbol? wrapSymbol;
           for (final symbol in _SmartTextEditingDelta._wrapSymbols) {
@@ -249,25 +236,38 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
             return;
           }
         }
-
-        // Standard Replacement
         _controller.replaceSelection(textToInsert);
         return;
       }
 
-      // 2. Handle Deletion (User pressed Backspace over a selection)
       bool isDeletion = firstDelta is TextEditingDeltaDeletion;
       bool isEmptyReplacement = firstDelta is TextEditingDeltaReplacement && firstDelta.replacementText.isEmpty;
-      
+
       if (isDeletion || isEmptyReplacement) {
-        // We force deleteSelection() here because the delta range sent by the IME
-        // might be tiny (e.g. deleting 1 char) if the IME thought the selection was collapsed.
         _controller.deleteSelection();
         return;
-      }    }
-    // --- FIX END ---
+      }
+    }
 
-    // _Trace.begin('updateEditingValue all');
+    bool isPrefixDeleted = false;
+    if (_remoteEditingValue?.usePrefix == true) {
+      for (final TextEditingDelta delta in textEditingDeltas) {
+        if (delta is TextEditingDeltaDeletion &&
+            delta.deletedRange.start == 0 &&
+            delta.deletedRange.end == 1) {
+          isPrefixDeleted = true;
+          break;
+        }
+        if (delta is TextEditingDeltaReplacement &&
+            delta.replacedRange.start == 0 &&
+            delta.replacedRange.end == 1 &&
+            delta.replacementText.isEmpty) {
+          isPrefixDeleted = true;
+          break;
+        }
+      }
+    }
+
     TextEditingValue newValue = _remoteEditingValue!;
     bool smartChange = false;
     for (final TextEditingDelta delta in textEditingDeltas) {
@@ -289,17 +289,17 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     if (!smartChange) {
       _remoteEditingValue = newValue;
     }
-    
+
+    if (isPrefixDeleted) {
+      _controller.deleteBackward();
+      return;
+    }
+
     if (newValue.usePrefix) {
-      if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
-        _controller.deleteBackward();
-      } else {
-        _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
-      }
+      _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
     } else {
       _applyMultiLineInputValue(newValue);
     }
-    // _Trace.end('updateEditingValue all');
   }
 
   @override
