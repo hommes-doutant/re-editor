@@ -211,6 +211,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
+    // Special, optimized handling for newlines
     if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
       TextEditingValue newValue = _remoteEditingValue!;
       for (final TextEditingDelta delta in textEditingDeltas) {
@@ -221,12 +222,19 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
+    // --- FIX START ---
+    // Handle interactions when text is selected. The IME often sends deltas (insertions/deletions)
+    // based on what it thinks is the context. For multi-line selections, we intentionally lie to 
+    // the IME (reporting collapsed selection) to prevent issues, so we must manually handle 
+    // the resulting deltas as "Replace" or "Delete" operations on the actual selection.
     if (!_controller.selection.isCollapsed && textEditingDeltas.isNotEmpty) {
       final TextEditingDelta firstDelta = textEditingDeltas.first;
 
+      // 1. Handle Insertion (User typed a character over a selection)
       if (firstDelta is TextEditingDeltaInsertion && firstDelta.textInserted.isNotEmpty) {
         final String textToInsert = firstDelta.textInserted;
 
+        // Bracket/Quote Wrapping: check if we should wrap the selection instead of replacing it
         if (_autocompleteSymbols) {
           _ClosureSymbol? wrapSymbol;
           for (final symbol in _SmartTextEditingDelta._wrapSymbols) {
@@ -241,38 +249,25 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
             return;
           }
         }
+
+        // Standard Replacement
         _controller.replaceSelection(textToInsert);
         return;
       }
 
+      // 2. Handle Deletion (User pressed Backspace over a selection)
       bool isDeletion = firstDelta is TextEditingDeltaDeletion;
       bool isEmptyReplacement = firstDelta is TextEditingDeltaReplacement && firstDelta.replacementText.isEmpty;
-
+      
       if (isDeletion || isEmptyReplacement) {
+        // We force deleteSelection() here because the delta range sent by the IME
+        // might be tiny (e.g. deleting 1 char) if the IME thought the selection was collapsed.
         _controller.deleteSelection();
         return;
-      }
-    }
+      }    }
+    // --- FIX END ---
 
-    bool isPrefixDeleted = false;
-    if (_remoteEditingValue?.usePrefix == true) {
-      for (final TextEditingDelta delta in textEditingDeltas) {
-        if (delta is TextEditingDeltaDeletion &&
-            delta.deletedRange.start == 0 &&
-            delta.deletedRange.end == 1) {
-          isPrefixDeleted = true;
-          break;
-        }
-        if (delta is TextEditingDeltaReplacement &&
-            delta.replacedRange.start == 0 &&
-            delta.replacedRange.end == 1 &&
-            delta.replacementText.isEmpty) {
-          isPrefixDeleted = true;
-          break;
-        }
-      }
-    }
-
+    // _Trace.begin('updateEditingValue all');
     TextEditingValue newValue = _remoteEditingValue!;
     bool smartChange = false;
     for (final TextEditingDelta delta in textEditingDeltas) {
@@ -294,17 +289,17 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     if (!smartChange) {
       _remoteEditingValue = newValue;
     }
-
-    if (isPrefixDeleted) {
-      _controller.deleteBackward();
-      return;
-    }
-
+    
     if (newValue.usePrefix) {
-      _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
+      if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
+        _controller.deleteBackward();
+      } else {
+        _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
+      }
     } else {
       _applyMultiLineInputValue(newValue);
     }
+    // _Trace.end('updateEditingValue all');
   }
 
   @override
@@ -717,7 +712,7 @@ class _SmartTextEditingDelta {
     return delta;
   }
 
-  TextEditingDelta _smartReplacement(TextEditingDeltaReplacement delta, CodeLineSelection selection) {
+TextEditingDelta _smartReplacement(TextEditingDeltaReplacement delta, CodeLineSelection selection) {
     if (!selection.isSameLine) {
       return delta;
     }
@@ -729,11 +724,19 @@ class _SmartTextEditingDelta {
       return delta;
     }
     final _ClosureSymbol symbol = _wrapSymbols[index];
+
+    final bool isReversed = selection.baseOffset > selection.extentOffset;
+    final int start = delta.replacedRange.start;
+    final int end = delta.replacedRange.end;
+
     return TextEditingDeltaReplacement(
         oldText: delta.oldText,
         replacementText: symbol.left + delta.textReplaced + symbol.right,
         replacedRange: delta.replacedRange,
-        selection: TextSelection(baseOffset: selection.startOffset + 1, extentOffset: selection.endOffset + 1),
+        selection: TextSelection(
+          baseOffset: isReversed ? end + 1 : start + 1,
+          extentOffset: isReversed ? start + 1 : end + 1,
+        ),
         composing: delta.composing);
   }
 
