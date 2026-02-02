@@ -241,7 +241,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
             return;
           }
         }
-
         _controller.replaceSelection(textToInsert);
         return;
       }

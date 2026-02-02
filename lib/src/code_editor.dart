@@ -566,16 +566,16 @@ class _CodeEditorState extends State<CodeEditor> {
       child = Focus(
         autofocus: autofocus,
         focusNode: _focusNode,
-        onKey: (node, event) {
-          if (event.isKeyPressed(LogicalKeyboardKey.backspace)) {
-            _editingController.deleteBackward();
-            return KeyEventResult.handled;
-          } else if (event.isKeyPressed(LogicalKeyboardKey.enter)) {
-            _editingController.applyNewLine();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
+        // onKey: (node, event) {
+        //   if (event.isKeyPressed(LogicalKeyboardKey.backspace)) {
+        //     _editingController.deleteBackward();
+        //     return KeyEventResult.handled;
+        //   } else if (event.isKeyPressed(LogicalKeyboardKey.enter)) {
+        //     _editingController.applyNewLine();
+        //     return KeyEventResult.handled;
+        //   }
+        //   return KeyEventResult.ignored;
+        // },
         includeSemantics: false,
         debugLabel: 'CodeEditor',
         child: detector
