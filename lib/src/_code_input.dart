@@ -264,8 +264,33 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
         // might be tiny (e.g. deleting 1 char) if the IME thought the selection was collapsed.
         _controller.deleteSelection();
         return;
-      }    }
+      }    
+    }
     // --- FIX END ---
+
+    // [BUG FIX] Detect if the prefix was explicitly deleted by a delta.
+    // We do not rely on "selection.start == 0" anymore because physical keyboards
+    // (arrow keys, shift) can produce that state without deleting text.
+    bool isPrefixDeleted = false;
+    if (_remoteEditingValue?.usePrefix == true) {
+      for (final TextEditingDelta delta in textEditingDeltas) {
+        // Check for deletion of range [0, 1)
+        if (delta is TextEditingDeltaDeletion && 
+            delta.replacedRange.start == 0 && 
+            delta.replacedRange.end == 1) {
+          isPrefixDeleted = true;
+          break;
+        }
+        // Check for replacement of range [0, 1) with empty text
+        if (delta is TextEditingDeltaReplacement && 
+            delta.replacedRange.start == 0 && 
+            delta.replacedRange.end == 1 && 
+            delta.replacementText.isEmpty) {
+          isPrefixDeleted = true;
+          break;
+        }
+      }
+    }
 
     // _Trace.begin('updateEditingValue all');
     TextEditingValue newValue = _remoteEditingValue!;
@@ -290,12 +315,15 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       _remoteEditingValue = newValue;
     }
     
+    // [BUG FIX] If the prefix was explicitly deleted, trigger backspace.
+    if (isPrefixDeleted) {
+      _controller.deleteBackward();
+      return;
+    }
+
     if (newValue.usePrefix) {
-      if (newValue.selection.isCollapsed && newValue.selection.start == 0) {
-        _controller.deleteBackward();
-      } else {
-        _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
-      }
+      // [BUG FIX] We removed the "newValue.selection.start == 0" check here.
+      _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
     } else {
       _applyMultiLineInputValue(newValue);
     }
