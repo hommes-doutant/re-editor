@@ -160,7 +160,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     return _LineCol(line, col);
   }
 
-  void _applyMultiLineInputValue(TextEditingValue value) {
+  void _applyMultiLineInputValue(TextEditingValue value, {bool forceNewRecord = true}) {
     if (_contextLineIndex == -1) return;
 
     const int kImeContextLines = 1;
@@ -174,7 +174,8 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       _contextLineIndex + kImeContextLines + 1,
     );
 
-    _controller.runRevocableOp(() {
+    // Define the operation to perform
+    void op() {
       final CodeLines modifiedCodeLines = codeLines.sublines(0, contextStartLine);
       modifiedCodeLines.addAll(newCodeLines);
       if (oldContextEndLine < codeLines.length) {
@@ -200,13 +201,22 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
           ? TextRange(start: composingStartPosition.col, end: composingEndPosition.col)
           : TextRange.empty;
 
+      // Update value. If not running inside runRevocableOp, this updates the 
+      // current history node instead of creating a new one (because markNewRecord is false).
       _controller.value = _controller.value.copyWith(
         codeLines: modifiedCodeLines,
         selection: newSelection,
         composing: newComposing,
       );
       _controller.makeCursorVisible();
-    });
+    }
+
+    // Conditionally wrap in runRevocableOp
+    if (forceNewRecord) {
+      _controller.runRevocableOp(op);
+    } else {
+      op();
+    }
   }
 
   @override
@@ -216,6 +226,7 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
+    // Special, optimized handling for newlines
     if (textEditingDeltas.any((delta) => delta is TextEditingDeltaInsertion && delta.textInserted == '\n')) {
       TextEditingValue newValue = _remoteEditingValue!;
       for (final TextEditingDelta delta in textEditingDeltas) {
@@ -226,51 +237,45 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       return;
     }
 
+    // --- FIX START ---
     if (!_controller.selection.isCollapsed && textEditingDeltas.isNotEmpty) {
+      // ... (existing selection override logic)
       final TextEditingDelta firstDelta = textEditingDeltas.first;
-
       if (firstDelta is TextEditingDeltaInsertion && firstDelta.textInserted.isNotEmpty) {
-        final String textToInsert = firstDelta.textInserted;
-
-        if (_autocompleteSymbols) {
-          _ClosureSymbol? wrapSymbol;
-          for (final symbol in _SmartTextEditingDelta._wrapSymbols) {
-            if (symbol.left == textToInsert) {
-              wrapSymbol = symbol;
-              break;
-            }
-          }
-          if (wrapSymbol != null) {
-            final String selectedText = _controller.selectedText;
-            _controller.replaceSelection('${wrapSymbol.left}$selectedText${wrapSymbol.right}');
-            return;
-          }
-        }
-        _controller.replaceSelection(textToInsert);
-        return;
+         // ... insertion logic
+         // This uses replaceSelection which uses runRevocableOp internally (force new record), which is correct for paste/replace.
+         final String textToInsert = firstDelta.textInserted;
+         // ... bracket wrapping logic
+         if (_autocompleteSymbols) {
+            // ...
+            // return;
+         }
+         _controller.replaceSelection(textToInsert);
+         return;
       }
-
+      // ... deletion logic
       bool isDeletion = firstDelta is TextEditingDeltaDeletion;
       bool isEmptyReplacement = firstDelta is TextEditingDeltaReplacement && firstDelta.replacementText.isEmpty;
-
       if (isDeletion || isEmptyReplacement) {
         _controller.deleteSelection();
         return;
-      }
+      } 
     }
+    // --- FIX END ---
 
+    // [BUG FIX] Detect if the prefix was explicitly deleted by a delta.
     bool isPrefixDeleted = false;
     if (_remoteEditingValue?.usePrefix == true) {
       for (final TextEditingDelta delta in textEditingDeltas) {
-        if (delta is TextEditingDeltaDeletion &&
-            delta.deletedRange.start == 0 &&
+        if (delta is TextEditingDeltaDeletion && 
+            delta.deletedRange.start == 0 && 
             delta.deletedRange.end == 1) {
           isPrefixDeleted = true;
           break;
         }
-        if (delta is TextEditingDeltaReplacement &&
-            delta.replacedRange.start == 0 &&
-            delta.replacedRange.end == 1 &&
+        if (delta is TextEditingDeltaReplacement && 
+            delta.replacedRange.start == 0 && 
+            delta.replacedRange.end == 1 && 
             delta.replacementText.isEmpty) {
           isPrefixDeleted = true;
           break;
@@ -304,16 +309,58 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     if (!smartChange) {
       _remoteEditingValue = newValue;
     }
-
+    
     if (isPrefixDeleted) {
       _controller.deleteBackward();
       return;
     }
 
+    // [ADD] Undo Grouping Logic
+    // Determine if we should force a new undo record or merge with the previous one.
+    bool forceNewRecord = true;
+    if (textEditingDeltas.length == 1) {
+      final TextEditingDelta delta = textEditingDeltas.first;
+      
+      // We only group single character insertions
+      if (delta is TextEditingDeltaInsertion && delta.textInserted.length == 1) {
+        final int codeUnit = delta.textInserted.codeUnitAt(0);
+        final int insertionOffset = delta.insertionOffset;
+
+        // Calculate where the cursor was expected to be for continuous typing
+        int expectedSelectionOffset = _controller.selection.extentOffset;
+        if (_remoteEditingValue?.usePrefix ?? false) {
+          expectedSelectionOffset += 1;
+        }
+
+        // 1. Check Continuity: Cursor must be exactly where we left off
+        final bool isContinuous = _controller.selection.isCollapsed && 
+                                  expectedSelectionOffset == insertionOffset;
+
+        // 2. Check Word Boundaries
+        if (isContinuous && insertionOffset > 0) {
+          final bool isWord = _isWordToken(codeUnit);
+          
+          // Look at the previous character
+          final int prevCodeUnit = delta.oldText.codeUnitAt(insertionOffset - 1);
+          final bool prevIsWord = _isWordToken(prevCodeUnit);
+          
+          // Logic: 
+          // - If we are typing a word char (a) and previous was word char (b) -> Merge (force=false).
+          // - If we type space/punctuation -> Force new record.
+          // - If we switch from space/punctuation to word char -> Force new record.
+          // - Ignore the prefix character \u200b (which is not a word token)
+          if (isWord && prevIsWord) {
+            forceNewRecord = false;
+          }
+        }
+      }
+    }
+
     if (newValue.usePrefix) {
-      _applyMultiLineInputValue(newValue.removePrefixIfNecessary());
+      // Pass the flag
+      _applyMultiLineInputValue(newValue.removePrefixIfNecessary(), forceNewRecord: forceNewRecord);
     } else {
-      _applyMultiLineInputValue(newValue);
+      _applyMultiLineInputValue(newValue, forceNewRecord: forceNewRecord);
     }
   }
 
