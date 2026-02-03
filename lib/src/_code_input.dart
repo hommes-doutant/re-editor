@@ -23,6 +23,8 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
   final _CodeFloatingCursorController _floatingCursorController;
   Timer? _floatingCursorScrollTimer;
 
+  bool _ignoreNextPrefixDeletion = false;
+
   GlobalKey? _editorKey;
 
   _CodeInputController({
@@ -80,6 +82,14 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
 
   set value(CodeLineEditingValue value) {
     _controller.value = value;
+  }
+  
+  void notifyHardwareKey() {
+    _ignoreNextPrefixDeletion = true;
+    // Reset shortly after, in case the IME delta never comes
+    Future.delayed(const Duration(milliseconds: 50), () {
+      _ignoreNextPrefixDeletion = false;
+    });
   }
 
   CodeLineEditingValue get value => _controller.value;
@@ -266,6 +276,11 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
           break;
         }
       }
+    }
+
+    if (isPrefixDeleted && _ignoreNextPrefixDeletion) {
+      _ignoreNextPrefixDeletion = false;
+      return;
     }
 
     TextEditingValue newValue = _remoteEditingValue!;

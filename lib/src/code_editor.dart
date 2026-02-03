@@ -563,23 +563,39 @@ class _CodeEditorState extends State<CodeEditor> {
     );
     final Widget child;
     if (kIsAndroid || kIsIOS) {
-      child = Focus(
-        autofocus: autofocus,
-        focusNode: _focusNode,
-        onKey: (node, event) {
-          if (event.isKeyPressed(LogicalKeyboardKey.backspace)) {
-            _editingController.deleteBackward();
-            return KeyEventResult.handled;
-          } else if (event.isKeyPressed(LogicalKeyboardKey.enter)) {
-            _editingController.applyNewLine();
-            return KeyEventResult.handled;
+         onKey: (node, event) {
+          // Check for KeyDown to prevent firing twice (on Down and Up)
+          if (event is RawKeyDownEvent || event is KeyDownEvent) {
+            if (event.logicalKey == LogicalKeyboardKey.backspace) {
+              // Tell controller to ignore the incoming IME delta for this deletion
+              _inputController.notifyHardwareKey(); 
+              _editingController.deleteBackward();
+              return KeyEventResult.handled;
+            } else if (event.logicalKey == LogicalKeyboardKey.enter) {
+              _inputController.notifyHardwareKey();
+              _editingController.applyNewLine();
+              return KeyEventResult.handled;
+            }
           }
           return KeyEventResult.ignored;
         },
-        includeSemantics: false,
-        debugLabel: 'CodeEditor',
-        child: detector
-      );
+      // child = Focus(
+      //   autofocus: autofocus,
+      //   focusNode: _focusNode,
+      //   onKey: (node, event) {
+      //     if (event.isKeyPressed(LogicalKeyboardKey.backspace)) {
+      //       _editingController.deleteBackward();
+      //       return KeyEventResult.handled;
+      //     } else if (event.isKeyPressed(LogicalKeyboardKey.enter)) {
+      //       _editingController.applyNewLine();
+      //       return KeyEventResult.handled;
+      //     }
+      //     return KeyEventResult.ignored;
+      //   },
+      //   includeSemantics: false,
+      //   debugLabel: 'CodeEditor',
+      //   child: detector
+      // );
     } else {
       child = _CodeShortcuts(
         builder: widget.shortcutsActivatorsBuilder ?? const DefaultCodeShortcutsActivatorsBuilder(),
