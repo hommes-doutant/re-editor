@@ -563,7 +563,10 @@ class _CodeEditorState extends State<CodeEditor> {
     );
     final Widget child;
     if (kIsAndroid || kIsIOS) {
-         onKey: (node, event) {
+      child = Focus(
+        autofocus: autofocus,
+        focusNode: _focusNode,
+        onKey: (node, event) {
           // Check for KeyDown to prevent firing twice (on Down and Up)
           if (event is RawKeyDownEvent || event is KeyDownEvent) {
             if (event.logicalKey == LogicalKeyboardKey.backspace) {
@@ -579,23 +582,20 @@ class _CodeEditorState extends State<CodeEditor> {
           }
           return KeyEventResult.ignored;
         },
-      // child = Focus(
-      //   autofocus: autofocus,
-      //   focusNode: _focusNode,
-      //   onKey: (node, event) {
-      //     if (event.isKeyPressed(LogicalKeyboardKey.backspace)) {
-      //       _editingController.deleteBackward();
-      //       return KeyEventResult.handled;
-      //     } else if (event.isKeyPressed(LogicalKeyboardKey.enter)) {
-      //       _editingController.applyNewLine();
-      //       return KeyEventResult.handled;
-      //     }
-      //     return KeyEventResult.ignored;
-      //   },
-      //   includeSemantics: false,
-      //   debugLabel: 'CodeEditor',
-      //   child: detector
-      // );
+        // onKey: (node, event) {
+        //   if (event.isKeyPressed(LogicalKeyboardKey.backspace)) {
+        //     _editingController.deleteBackward();
+        //     return KeyEventResult.handled;
+        //   } else if (event.isKeyPressed(LogicalKeyboardKey.enter)) {
+        //     _editingController.applyNewLine();
+        //     return KeyEventResult.handled;
+        //   }
+        //   return KeyEventResult.ignored;
+        // },
+        includeSemantics: false,
+        debugLabel: 'CodeEditor',
+        child: detector
+      );
     } else {
       child = _CodeShortcuts(
         builder: widget.shortcutsActivatorsBuilder ?? const DefaultCodeShortcutsActivatorsBuilder(),
