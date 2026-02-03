@@ -218,6 +218,13 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       op();
     }
   }
+  
+  bool _isWordToken(int codeUnit) {
+  return (codeUnit >= 48 && codeUnit <= 57) || // 0-9
+         (codeUnit >= 65 && codeUnit <= 90) || // A-Z
+         (codeUnit >= 97 && codeUnit <= 122) || // a-z
+         (codeUnit == 95); // _
+}
 
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
