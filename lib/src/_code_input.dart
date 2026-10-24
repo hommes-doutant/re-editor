@@ -544,16 +544,6 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
     }
   }
 
-  void _openOrCloseInputConnectionIfNeeded() {
-    if (_focusNode.hasFocus && !_readOnly) {
-      if (_focusNode.consumeKeyboardToken()) {
-        _openInputConnection();
-      }
-    } else {
-      _closeInputConnectionIfNeeded();
-      _controller.clearComposing();
-    }
-  }
 
   void _openInputConnection() {
     final BuildContext? context = _editorKey?.currentContext;
@@ -652,7 +642,9 @@ class _CodeInputController extends ChangeNotifier implements DeltaTextInputClien
       composing: newComposing,
     ).appendPrefixIfNecessary();
   }
-}
+
+@override
+bool onFocusReceived() => false;}
 
 class _SmartTextEditingDelta {
   static const List<_ClosureSymbol> _closureSymbols = [
